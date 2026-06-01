@@ -4,8 +4,8 @@
  * This provides the basic JavaScript for the RetroArch web player.
  */
 
-const defaultCore = "gambatte";
-var autoStart = false;
+const defaultCore = "dosbox_pure";
+var autoStart = true;
 
 var BrowserFS = BrowserFS;
 var afs;
@@ -146,17 +146,40 @@ function preLoadingComplete() {
    }
 }
 
+function logBrowserFS() {
+   const origWrite = Module.FS.write;
+   Module.FS.write = function (stream, buffer, offset, length, position, canOwn) {
+   const path = stream && stream.path;
+   if (path && path.includes('/states/')) {
+      console.log('[FS.write] save state', { path, length });
+      debugger;
+   }
+   return origWrite.apply(this, arguments);
+};
+}
+
 function mountBrowserFS() {
+   console.log("WEBPLAYER: mountBrowserFS called", {
+      hasModuleFS: !!(Module && Module.FS),
+      hasModulePATH: !!(Module && Module.PATH),
+      hasModuleErrno: !!(Module && Module.ERRNO_CODES)
+   });
    var BFS = new BrowserFS.EmscriptenFS(Module.FS, Module.PATH, Module.ERRNO_CODES);
+   console.log("WEBPLAYER: created EmscriptenFS", BFS);
    Module.FS.mount(BFS, {
       root: '/home'
    }, '/home');
 
    // create fake core files for RetroArch
-   Module.FS.writeFile("/home/web_user/retroarch/cores/" + currentCore + "_libretro.core", new Uint8Array());
-   for (let core of Object.keys(libretroCores)) {
-      Module.FS.writeFile("/home/web_user/retroarch/cores/" + core + "_libretro.core", new Uint8Array());
+   try {
+      Module.FS.writeFile("/home/web_user/retroarch/cores/" + currentCore + "_libretro.core", new Uint8Array());
+      for (let core of Object.keys(libretroCores)) {
+         Module.FS.writeFile("/home/web_user/retroarch/cores/" + core + "_libretro.core", new Uint8Array());
+      }
+   } catch (e) {
+      console.error("WEBPLAYER: failed to create fake core files", e);
    }
+   logBrowserFS();
 }
 
 function setupFileSystem() {
@@ -167,11 +190,18 @@ function setupFileSystem() {
    var zipfs = new BrowserFS.FileSystem.ZipFS(zipTOC);
    // create an XmlHttpRequest filesystem for core assets
    var xfs = new BrowserFS.FileSystem.XmlHttpRequest(".index-xhr", "assets/cores/");
+   var gfs;
+   try {
+      gfs = new BrowserFS.FileSystem.XmlHttpRequest(".index-xhr", "assets/games/");
+   } catch (e) {
+      gfs = null;
+   }
 
    mfs.mount('/home/web_user/retroarch', zipfs);
    mfs.mount('/home/web_user/retroarch/cores', new BrowserFS.FileSystem.InMemory());
    mfs.mount('/home/web_user/retroarch/userdata', afs);
    mfs.mount('/home/web_user/retroarch/userdata/content/downloads', xfs);
+   if (gfs) mfs.mount('/home/web_user/retroarch/userdata/content/games', gfs);
    BrowserFS.initialize(mfs);
    mountBrowserFS();
 

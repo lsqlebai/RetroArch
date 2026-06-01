@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: libretro-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - "./libretro:/usr/share/nginx/html:ro"
+      - "./nginx.conf:/etc/nginx/conf.d/default.conf:ro"
+    restart: unless-stopped
+
+  nginx_thread:
+    image: nginx:alpine
+    container_name: libretro-nginx-thread
+    ports:
+      - "8081:80"
+    volumes:
+      - "./libretro-thread:/usr/share/nginx/html:ro"
+      - "./nginx.conf:/etc/nginx/conf.d/default.conf:ro"
+    restart: unless-stopped

@@ -4,8 +4,6 @@
  * This provides the basic styling for the RetroArch web player.
  */
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&display=swap");
-
 @keyframes loaded {
 	from {
 		opacity: 0.2;
@@ -46,7 +44,7 @@
 body {
 	margin: 0px;
 	background-color: black;
-	font-family: "Inter", sans-serif;
+	font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 	font-variant-ligatures: no-contextual;
 	scrollbar-color: #505050 #2e2e2e;
 
@@ -73,6 +71,10 @@ body {
 	--actualmenuheight: var(--menuheight);
 	--menubuttonbordery: calc(var(--menuheight) - calc(var(--menumarginy) * 2));
 	--menubuttoncontenty: calc(var(--menubuttonbordery) - calc(var(--menupaddingy) * 2));
+}
+
+button, input, select, textarea {
+	font-family: inherit;
 }
 
 canvas.webplayer, #webplayer-preview {

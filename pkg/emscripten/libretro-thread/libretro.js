@@ -4,7 +4,7 @@
  * This provides the basic JavaScript for the RetroArch web player.
  */
 
-const defaultCore = "gambatte";
+const defaultCore = "dosbox_pure";
 var autoStart = true;
 
 let currentCore;
@@ -72,6 +72,7 @@ let Module;
 let fsLoadPromise;
 let reloadTimeout;
 let retroArchRunning = false;
+let appInitializedStarted = false;
 
 // all methods provided by the worker that we may require
 const workerHandlers = {FS: ["init", "writeFile", "readFile", "mkdirTree", "readdir", "readdirTree", "rm", "stat"], helper: ["loadFS", "zipDirs"]};
@@ -197,6 +198,41 @@ const ModuleBase = {
 	},
 	canvas: canvas
 };
+
+function mountGamesXHR() {
+	if (!window.BrowserFS) return;
+	if (!Module?.FS || !Module?.PATH || !Module?.ERRNO_CODES) return;
+	if (typeof Module.FS.mount !== "function") {
+		console.warn("FS.mount not available, cannot mount games");
+		return;
+	}
+	try {
+		const gfs = new BrowserFS.FileSystem.XmlHttpRequest(".index-xhr", "assets/cores/");
+		BrowserFS.initialize(gfs);
+		const bfs = new BrowserFS.EmscriptenFS(Module.FS, Module.PATH, Module.ERRNO_CODES);
+		for (const mountPoint of [
+			"/home/web_user/retroarch/content/games",
+			"/home/web_user/retroarch/userdata/content/games",
+			"/retroarch/content/games",
+			"/retroarch/userdata/content/games"
+		]) {
+			try {
+				Module.FS.mkdirTree(mountPoint);
+			} catch (e) {}
+			try {
+				Module.FS.unmount(mountPoint);
+			} catch (e) {}
+			try {
+				Module.FS.mount(bfs, {root: "/"}, mountPoint);
+				console.log("Mounted games XHR FS at", mountPoint);
+			} catch (e) {
+				console.warn("Failed to mount games at " + mountPoint, e);
+			}
+		}
+	} catch (e) {
+		console.warn("Failed to mount games XHR FS", e);
+	}
+}
 
 // read File object to an ArrayBuffer
 function readFile(file) {
@@ -350,9 +386,12 @@ function startRetroArch() {
 
 // called when the emscripten module has loaded
 async function appInitialized() {
+	if (appInitializedStarted) return;
+	appInitializedStarted = true;
 	console.log("WASM runtime initialized");
 	await fsLoadPromise;
 	console.log("FS initialized");
+	mountGamesXHR();
 
 	// ensure the current core exists even if it's not in the core list
 	await FS.writeFile("/retroarch/cores/" + currentCore + "_libretro.core", new Uint8Array());
@@ -398,8 +437,13 @@ function loadCoreFromUrl(url, core, args) {
 	ModuleBase.mainScriptUrlOrBlob = url;
 	ModuleBase.canvas = canvas;
 	ModuleBase.corePath = "/home/web_user/retroarch/cores/" + core + "_libretro.core";
+	const moduleConfig = Object.assign({}, ModuleBase);
+	moduleConfig.onRuntimeInitialized = function() {
+		Module = moduleConfig;
+		appInitialized();
+	};
 	import(url).then(script => {
-		script.default(Object.assign({}, ModuleBase)).then(mod => {
+		script.default(moduleConfig).then(mod => {
 			Module = mod;
 		}).catch(err => {
 			console.error("Couldn't instantiate module", err);
@@ -506,7 +550,7 @@ document.addEventListener("DOMContentLoaded", async function() {
 		icnAdd.classList.remove("fa-spinner", "fa-spin");
 		icnAdd.classList.add("fa-plus");
 	});
-	
+
 	fileManagerPanel.addEventListener("click", function(e) {
 		fileManagerEvent(e.target);
 	});
