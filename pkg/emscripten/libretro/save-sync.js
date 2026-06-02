@@ -208,6 +208,7 @@
          "Accept": "application/json",
          "Content-Type": "application/json"
       }, options.headers || {});
+      options.credentials = options.credentials || "same-origin";
       return fetch(url, options).then(function(resp) {
          return resp.text().then(function(text) {
             var data = safeJsonParse(text, {});

@@ -8,27 +8,45 @@ const crypto = require("crypto");
 const PORT = Number(process.env.SYNC_PORT || 8787);
 const ROOT = path.resolve(process.env.SYNC_DATA_DIR || path.join(__dirname, "sync-data"));
 const GAMES_DIR = path.resolve(process.env.SYNC_GAMES_DIR || path.join(__dirname, "libretro", "assets", "games"));
-const DEFAULT_USER_ID = "1";
 const DEFAULT_GAME_ID = "default";
 const MANIFEST_FILE = "manifest.server";
+const USERS_FILE = path.join(ROOT, "auth", "users.json");
+const SESSIONS_FILE = path.join(ROOT, "auth", "sessions.json");
+const SESSION_COOKIE = "retroarch_session";
+const TOKEN_BYTES = 32;
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, extraHeaders) {
   const text = JSON.stringify(body == null ? {} : body);
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(text),
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,PUT,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization"
+    "Access-Control-Allow-Headers": "Content-Type",
+    ...(extraHeaders || {})
   });
   res.end(text);
 }
 
 function sanitizeUserId(userId) {
-  userId = userId || DEFAULT_USER_ID;
   if (!/^[a-zA-Z0-9_-]+$/.test(userId))
     throw new Error("invalid userId");
   return userId;
+}
+
+function normalizeUsername(username) {
+  username = String(username || "").trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(username))
+    throw new Error("username must be 3-32 characters: letters, numbers, _ or -");
+  return username;
+}
+
+function sanitizePassword(password) {
+  password = String(password || "");
+  if (password.length < 6 || password.length > 128)
+    throw new Error("password must be 6-128 characters");
+  return password;
 }
 
 function sanitizeGameId(gameId) {
@@ -97,6 +115,164 @@ async function readBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+async function readJsonFile(file, fallback) {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8"));
+  } catch (e) {
+    if (e.code === "ENOENT")
+      return fallback;
+    throw e;
+  }
+}
+
+async function writeJsonFile(file, data) {
+  await fs.mkdir(path.dirname(file), {recursive: true});
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fs.rename(tmp, file);
+}
+
+function userPublic(user) {
+  return {
+    userId: user.id,
+    username: user.username,
+    createdAt: user.createdAt
+  };
+}
+
+function passwordHash(password, salt) {
+  return crypto.pbkdf2Sync(password, salt, 150000, 32, "sha256").toString("hex");
+}
+
+function hashToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+async function findUserByUsername(username) {
+  const users = await readJsonFile(USERS_FILE, {users: []});
+  return {users, user: users.users.find(item => item.username === username)};
+}
+
+async function createSession(user) {
+  const token = crypto.randomBytes(TOKEN_BYTES).toString("base64url");
+  const sessions = await readJsonFile(SESSIONS_FILE, {sessions: {}});
+  sessions.sessions[hashToken(token)] = {
+    userId: user.id,
+    username: user.username,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString()
+  };
+  await writeJsonFile(SESSIONS_FILE, sessions);
+  return token;
+}
+
+function parseCookies(req) {
+  return String(req.headers.cookie || "").split(";").reduce((cookies, item) => {
+    const idx = item.indexOf("=");
+    if (idx < 0)
+      return cookies;
+    const key = item.slice(0, idx).trim();
+    const value = item.slice(idx + 1).trim();
+    if (key)
+      cookies[key] = decodeURIComponent(value);
+    return cookies;
+  }, {});
+}
+
+function sessionCookie(token) {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/api/sync/v1; Max-Age=${maxAge}; HttpOnly; SameSite=Lax`;
+}
+
+function clearSessionCookie() {
+  return `${SESSION_COOKIE}=; Path=/api/sync/v1; Max-Age=0; HttpOnly; SameSite=Lax`;
+}
+
+async function requireUser(req, url) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token)
+    throw Object.assign(new Error("login required"), {statusCode: 401});
+
+  const sessions = await readJsonFile(SESSIONS_FILE, {sessions: {}});
+  const session = sessions.sessions[hashToken(token)];
+  if (!session)
+    throw Object.assign(new Error("invalid session"), {statusCode: 401});
+  if (Date.parse(session.expiresAt) <= Date.now())
+  {
+    delete sessions.sessions[hashToken(token)];
+    await writeJsonFile(SESSIONS_FILE, sessions);
+    throw Object.assign(new Error("session expired"), {statusCode: 401});
+  }
+
+  const requestedUserId = url.searchParams.get("userId");
+  if (requestedUserId && requestedUserId !== session.userId)
+    throw Object.assign(new Error("session does not match userId"), {statusCode: 403});
+
+  return {
+    id: sanitizeUserId(session.userId),
+    username: session.username
+  };
+}
+
+async function handleRegister(req, res) {
+  if (req.method !== "POST")
+    return sendJson(res, 405, {error: "method not allowed"});
+  const body = await readBody(req);
+  const username = normalizeUsername(body.username);
+  const password = sanitizePassword(body.password);
+  const {users, user} = await findUserByUsername(username);
+  if (user)
+    return sendJson(res, 409, {error: "user already exists"});
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const newUser = {
+    id: username,
+    username,
+    salt,
+    passwordHash: passwordHash(password, salt),
+    createdAt: new Date().toISOString()
+  };
+  users.users.push(newUser);
+  users.users.sort((a, b) => a.username.localeCompare(b.username));
+  await writeJsonFile(USERS_FILE, users);
+  const token = await createSession(newUser);
+  sendJson(res, 200, {user: userPublic(newUser)}, {"Set-Cookie": sessionCookie(token)});
+}
+
+async function handleLogin(req, res) {
+  if (req.method !== "POST")
+    return sendJson(res, 405, {error: "method not allowed"});
+  const body = await readBody(req);
+  const username = normalizeUsername(body.username);
+  const password = sanitizePassword(body.password);
+  const {user} = await findUserByUsername(username);
+  if (!user || user.passwordHash !== passwordHash(password, user.salt))
+    return sendJson(res, 401, {error: "invalid username or password"});
+
+  const token = await createSession(user);
+  sendJson(res, 200, {user: userPublic(user)}, {"Set-Cookie": sessionCookie(token)});
+}
+
+async function handleMe(req, res, url) {
+  if (req.method !== "GET")
+    return sendJson(res, 405, {error: "method not allowed"});
+  const user = await requireUser(req, url);
+  sendJson(res, 200, {user: {userId: user.id, username: user.username}});
+}
+
+async function handleLogout(req, res) {
+  if (req.method !== "POST")
+    return sendJson(res, 405, {error: "method not allowed"});
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (token)
+  {
+    const sessions = await readJsonFile(SESSIONS_FILE, {sessions: {}});
+    delete sessions.sessions[hashToken(token)];
+    await writeJsonFile(SESSIONS_FILE, sessions);
+  }
+  sendJson(res, 200, {ok: true}, {"Set-Cookie": clearSessionCookie()});
+}
+
 async function readManifest(userId, gameId) {
   try {
     return JSON.parse(await fs.readFile(objectPath(userId, gameId, MANIFEST_FILE), "utf8"));
@@ -118,7 +294,7 @@ async function writeManifest(userId, gameId, manifest) {
 }
 
 async function handleManifest(req, res, url) {
-  const userId = sanitizeUserId(url.searchParams.get("userId"));
+  const userId = (await requireUser(req, url)).id;
   const gameId = sanitizeGameId(url.searchParams.get("gameId"));
   if (req.method === "GET")
     return sendJson(res, 200, await readManifest(userId, gameId));
@@ -128,7 +304,7 @@ async function handleManifest(req, res, url) {
 }
 
 async function handleGetFile(req, res, url) {
-  const userId = sanitizeUserId(url.searchParams.get("userId"));
+  const userId = (await requireUser(req, url)).id;
   const gameId = sanitizeGameId(url.searchParams.get("gameId"));
   const relPath = sanitizeRelPath(url.searchParams.get("path"));
   if (relPath === MANIFEST_FILE)
@@ -149,7 +325,7 @@ async function handleGetFile(req, res, url) {
 }
 
 async function handlePutFile(req, res, url) {
-  const userId = sanitizeUserId(url.searchParams.get("userId"));
+  const userId = (await requireUser(req, url)).id;
   const gameId = sanitizeGameId(url.searchParams.get("gameId"));
   const body = await readBody(req);
   const relPath = sanitizeRelPath(body.path);
@@ -165,7 +341,7 @@ async function handlePutFile(req, res, url) {
 }
 
 async function handleDeleteFile(req, res, url) {
-  const userId = sanitizeUserId(url.searchParams.get("userId"));
+  const userId = (await requireUser(req, url)).id;
   const gameId = sanitizeGameId(url.searchParams.get("gameId"));
   const body = await readBody(req);
   const relPath = sanitizeRelPath(body.path || url.searchParams.get("path"));
@@ -229,6 +405,14 @@ async function route(req, res) {
   if (!url.pathname.startsWith("/api/sync/v1/"))
     return sendJson(res, 404, {error: "not found"});
 
+  if (url.pathname === "/api/sync/v1/auth/register")
+    return handleRegister(req, res);
+  if (url.pathname === "/api/sync/v1/auth/login")
+    return handleLogin(req, res);
+  if (url.pathname === "/api/sync/v1/auth/logout")
+    return handleLogout(req, res);
+  if (url.pathname === "/api/sync/v1/auth/me")
+    return handleMe(req, res, url);
   if (url.pathname === "/api/sync/v1/manifest")
     return handleManifest(req, res, url);
   if (url.pathname === "/api/sync/v1/games")
@@ -249,7 +433,7 @@ async function route(req, res) {
 const server = http.createServer((req, res) => {
   route(req, res).catch(err => {
     console.error(err);
-    sendJson(res, 500, {error: err.message || String(err)});
+    sendJson(res, err.statusCode || 500, {error: err.message || String(err)});
   });
 });
 

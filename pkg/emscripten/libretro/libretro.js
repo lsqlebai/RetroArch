@@ -5,10 +5,12 @@
  */
 
 const defaultCore = "dosbox_pure";
-const coreAssetVersion = "20260602-114500";
+const coreAssetVersion = "20260602-190000";
+const authApiBase = "/api/sync/v1/auth";
 var autoStart = true;
 var debugParams = new URLSearchParams(window.location.search);
-var disableSaveSync = !debugParams.has("sync");
+var syncParam = debugParams.get("sync");
+var disableSaveSync = debugParams.has("nosync") || syncParam === "0" || syncParam === "false";
 
 var BrowserFS = BrowserFS;
 var afs;
@@ -17,10 +19,99 @@ var initializationCount = 0;
 var Module;
 var currentCore;
 var currentGame;
+var currentUser = null;
 var reloadTimeout;
 var retroArchRunning = false;
 var saveSyncReady = Promise.resolve();
+var authReady = Promise.resolve(null);
+var authModalMode = "login";
 var canvas = document.getElementById("canvas");
+
+function setMenuItemEnabled(id, enabled) {
+   var item = document.getElementById(id);
+   if (!item)
+      return;
+   if (enabled)
+   {
+      item.classList.remove("disabled");
+      item.setAttribute("aria-disabled", "false");
+   }
+   else
+   {
+      item.classList.add("disabled");
+      item.setAttribute("aria-disabled", "true");
+   }
+}
+
+function setSyncControlsEnabled(enabled) {
+   ["menuSyncNow", "menuUploadSync", "menuDownloadSync", "menuSyncConflicts"].forEach(function(id) {
+      setMenuItemEnabled(id, enabled);
+   });
+}
+
+function authRequest(path, options) {
+   options = options || {};
+   options.credentials = "same-origin";
+   options.headers = Object.assign({
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+   }, options.headers || {});
+   return fetch(authApiBase + path, options).then(function(resp) {
+      return resp.text().then(function(text) {
+         var data = text ? JSON.parse(text) : {};
+         if (!resp.ok)
+         {
+            var err = new Error(data.error || ("HTTP " + resp.status));
+            err.status = resp.status;
+            throw err;
+         }
+         return data;
+      });
+   });
+}
+
+function updateAuthUi() {
+   var label = document.getElementById("userMenuLabel");
+   var message = document.getElementById("loginMessage");
+   var loggedIn = !!currentUser;
+   var syncEnabled = loggedIn && !disableSaveSync;
+   if (label)
+      label.textContent = loggedIn ? currentUser.username : "Login";
+   $(".auth-logged-in").toggle(loggedIn);
+   $(".auth-logged-out").toggle(!loggedIn);
+   var menuUserName = document.getElementById("menuUserName");
+   if (menuUserName && loggedIn)
+      menuUserName.textContent = currentUser.username;
+   if (message && currentUser)
+      message.textContent = "";
+   setSyncControlsEnabled(syncEnabled);
+   if (!loggedIn && !disableSaveSync)
+   {
+      var status = document.getElementById("syncStatus");
+      if (status)
+         status.textContent = "login required";
+   }
+   else if (disableSaveSync)
+   {
+      var disabledStatus = document.getElementById("syncStatus");
+      if (disabledStatus)
+         disabledStatus.textContent = "sync disabled";
+   }
+}
+
+function loadCurrentUser() {
+   return authRequest("/me", {method: "GET"}).then(function(data) {
+      currentUser = data.user || null;
+      updateAuthUi();
+      return currentUser;
+   }).catch(function(e) {
+      currentUser = null;
+      updateAuthUi();
+      if (e.status !== 401)
+         console.warn("WEBPLAYER: auth session check failed", e);
+      return null;
+   });
+}
 
 function modulePreRun(module) {
    module.ENV["LIBRARY_PATH"] = module.corePath;
@@ -138,7 +229,9 @@ function appInitialized() {
       saveSyncReady = discoverCurrentGame().then(function(game) {
          currentGame = game;
          clearWebMouseOverrides();
-         return initSaveSync(game);
+         return authReady.then(function() {
+            return initSaveSync(game);
+         });
       });
       saveSyncReady.then(preLoadingComplete).catch(function(e) {
          console.warn("WEBPLAYER: save sync init failed, continuing offline", e);
@@ -180,13 +273,35 @@ function initSaveSync(game) {
    }
    if (!window.RetroArchSaveSync)
       return Promise.resolve();
+   if (!currentUser)
+   {
+      console.log("WEBPLAYER: save sync waiting for login", {
+         gameId: game ? game.gameId : "default"
+      });
+      setSyncControlsEnabled(false);
+      var status = document.getElementById("syncStatus");
+      if (status)
+         status.textContent = "login required";
+      return Promise.resolve();
+   }
    return window.RetroArchSaveSync.init({
       Module: Module,
-      userId: "1",
+      userId: currentUser.userId,
       gameId: game ? game.gameId : "default",
       basePath: "/home/web_user/retroarch/userdata",
       dirs: ["saves", "states"],
       apiBase: "/api/sync/v1"
+   });
+}
+
+function restartSaveSyncForUser() {
+   if (!Module || !window.RetroArchSaveSync)
+      return Promise.resolve();
+   return discoverCurrentGame().then(function(game) {
+      currentGame = game;
+      return initSaveSync(game);
+   }).then(function() {
+      renderSyncConflicts();
    });
 }
 
@@ -444,8 +559,100 @@ function uploadData(data, name) {
    Module.FS.unlink(name);
 }
 
+function openAuthModal(mode) {
+   authModalMode = mode === "register" ? "register" : "login";
+   var title = document.querySelector("#loginModal .modal-title");
+   var submit = document.getElementById("btnLoginSubmit");
+   var register = document.getElementById("btnRegister");
+   var message = document.getElementById("loginMessage");
+   var password = document.getElementById("loginPassword");
+   var confirm = document.getElementById("loginPasswordConfirm");
+   if (title)
+      title.textContent = authModalMode === "register" ? "Cloud Register" : "Cloud Login";
+   if (submit)
+      submit.style.display = authModalMode === "register" ? "none" : "";
+   if (register)
+      register.style.display = authModalMode === "register" ? "" : "";
+   $(".auth-register-only").toggle(authModalMode === "register");
+   if (password)
+      password.setAttribute("autocomplete", authModalMode === "register" ? "new-password" : "current-password");
+   if (confirm)
+   {
+      confirm.required = authModalMode === "register";
+      confirm.value = "";
+   }
+   if (message)
+      message.textContent = "";
+   $('#loginModal').modal('show');
+}
+
+function submitAuth(mode) {
+   var username = document.getElementById("loginUsername").value;
+   var password = document.getElementById("loginPassword").value;
+   var confirm = document.getElementById("loginPasswordConfirm").value;
+   var message = document.getElementById("loginMessage");
+   if (message)
+      message.textContent = "";
+   if (mode === "register" && password !== confirm)
+   {
+      if (message)
+         message.textContent = "passwords do not match";
+      return Promise.resolve();
+   }
+   return authRequest(mode === "register" ? "/register" : "/login", {
+      method: "POST",
+      body: JSON.stringify({username: username, password: password})
+   }).then(function(data) {
+      currentUser = data.user || null;
+      updateAuthUi();
+      $('#loginModal').modal('hide');
+      return restartSaveSyncForUser();
+   }).catch(function(e) {
+      if (message)
+         message.textContent = e.message || String(e);
+   });
+}
+
+function setupAuthUi() {
+   updateAuthUi();
+   $(".auth-register-only").hide();
+   authReady = loadCurrentUser();
+
+   $('#menuLogin').click(function(e) {
+      e.preventDefault();
+      openAuthModal("login");
+   });
+
+   $('#menuRegister').click(function(e) {
+      e.preventDefault();
+      openAuthModal("register");
+   });
+
+   $('#loginForm').submit(function(e) {
+      e.preventDefault();
+      submitAuth(authModalMode);
+   });
+
+   $('#btnRegister').click(function() {
+      submitAuth("register");
+   });
+
+   $('#menuLogout').click(function(e) {
+      e.preventDefault();
+      authRequest("/logout", {method: "POST"}).catch(function(e) {
+         console.warn("WEBPLAYER: logout failed", e);
+      }).then(function() {
+         currentUser = null;
+         updateAuthUi();
+         renderSyncConflicts();
+      });
+   });
+}
+
 // When the browser has loaded everything.
 $(function() {
+   setupAuthUi();
+
    // create core list
    var coreArray = Object.entries(libretroCores);
    var coreNames = Object.values(libretroCores).sort();
@@ -469,35 +676,38 @@ $(function() {
       placement: 'right'
    });
 
-   $('#btnSync').click(function() {
-      if (!window.RetroArchSaveSync)
+   $('#menuSyncNow').click(function(e) {
+      e.preventDefault();
+      if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
          return;
-      $('#icnSync').addClass('fa-spin');
+      $('#icnMenuSync').addClass('fa-spin');
       window.RetroArchSaveSync.syncNow().catch(function(e) {
          console.warn("WEBPLAYER: manual save sync failed", e);
       }).then(function() {
-         $('#icnSync').removeClass('fa-spin');
+         $('#icnMenuSync').removeClass('fa-spin');
          renderSyncConflicts();
       });
    });
 
-   $('#btnUploadSync').click(function() {
-      if (!window.RetroArchSaveSync)
+   $('#menuUploadSync').click(function(e) {
+      e.preventDefault();
+      if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
          return;
-      $('#icnUploadSync').addClass('fa-spin');
+      $('#icnMenuUploadSync').addClass('fa-spin');
       window.RetroArchSaveSync.uploadNow().catch(function(e) {
          console.warn("WEBPLAYER: manual save upload failed", e);
       }).then(function() {
-         $('#icnUploadSync').removeClass('fa-spin');
+         $('#icnMenuUploadSync').removeClass('fa-spin');
          renderSyncConflicts();
       });
    });
 
-   $('#btnDownloadSync').click(function() {
+   $('#menuDownloadSync').click(function(e) {
+      e.preventDefault();
       console.log("WEBPLAYER: Use Cloud clicked", {
          hasSaveSync: !!window.RetroArchSaveSync
       });
-      if (!window.RetroArchSaveSync)
+      if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
       {
          console.warn("WEBPLAYER: Use Cloud ignored because save sync is not available");
          return;
@@ -507,13 +717,20 @@ $(function() {
          console.log("WEBPLAYER: Use Cloud canceled by user");
          return;
       }
-      $('#icnDownloadSync').addClass('fa-spin');
+      $('#icnMenuDownloadSync').addClass('fa-spin');
       window.RetroArchSaveSync.downloadNow().catch(function(e) {
          console.warn("WEBPLAYER: manual cloud restore failed", e);
       }).then(function() {
-         $('#icnDownloadSync').removeClass('fa-spin');
+         $('#icnMenuDownloadSync').removeClass('fa-spin');
          renderSyncConflicts();
       });
+   });
+
+   $('#menuSyncConflicts').click(function(e) {
+      e.preventDefault();
+      if (!currentUser || disableSaveSync)
+         return;
+      $('#syncModal').modal('show');
    });
 
    $('#syncModal').on('show.bs.modal', function() {
@@ -620,8 +837,11 @@ function renderSyncConflicts() {
    var conflicts = window.RetroArchSaveSync.getPendingConflicts();
    var list = document.getElementById("syncConflictList");
    var count = document.getElementById("syncConflicts");
+   var menuCount = document.getElementById("menuConflictCount");
    if (count)
       count.textContent = String(conflicts.length);
+   if (menuCount)
+      menuCount.textContent = String(conflicts.length);
    if (!list)
       return;
    list.innerHTML = "";

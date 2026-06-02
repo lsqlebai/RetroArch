@@ -41,19 +41,24 @@
                         <button class="btn btn-primary disabled tooltip-enable" id="btnFullscreen" title="Fullscreen" disabled>
                         <span class="fa fa-desktop" id="icnFullscreen"></span> <span class="sr-only">Fullscreen</span>
                         </button>
-                        <button class="btn btn-primary tooltip-enable" id="btnSync" title="Sync saves and states">
-                        <span class="fa fa-refresh" id="icnSync"></span> Sync <span id="syncConflicts" class="tag tag-danger">0</span>
-                        </button>
-                        <button class="btn btn-primary tooltip-enable" id="btnUploadSync" title="Upload local saves and states">
-                        <span class="fa fa-upload" id="icnUploadSync"></span> Upload
-                        </button>
-                        <button class="btn btn-primary tooltip-enable" id="btnDownloadSync" title="Replace local saves and states with cloud data">
-                        <span class="fa fa-download" id="icnDownloadSync"></span> Use Cloud
-                        </button>
-                        <button class="btn btn-primary tooltip-enable" id="btnSyncConflicts" title="Resolve sync conflicts" data-toggle="modal" data-target="#syncModal">
-                        Resolve
-                        </button>
                         <span class="navbar-text" id="syncStatus">sync idle</span>
+                        <div class="dropdown webplayer-user-menu">
+                           <button class="btn btn-primary dropdown-toggle" type="button" id="btnUserMenu" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                           <span class="fa fa-user" id="icnUserMenu"></span> <span id="userMenuLabel">Login</span> <span id="syncConflicts" class="tag tag-danger">0</span>
+                           </button>
+                           <div class="dropdown-menu dropdown-primary" aria-labelledby="btnUserMenu" data-dropdown-in="fadeIn" data-dropdown-out="fadeOut" id="user-menu">
+                              <a class="dropdown-item auth-logged-out" href="#" id="menuLogin">Login</a>
+                              <a class="dropdown-item auth-logged-out" href="#" id="menuRegister">Register</a>
+                              <span class="dropdown-item disabled auth-logged-out" id="menuLoggedOutStatus">Cloud sync requires login</span>
+                              <span class="dropdown-item disabled auth-logged-in" id="menuUserName">User</span>
+                              <a class="dropdown-item auth-logged-in" href="#" id="menuSyncNow"><span class="fa fa-refresh" id="icnMenuSync"></span> Sync Now</a>
+                              <a class="dropdown-item auth-logged-in" href="#" id="menuUploadSync"><span class="fa fa-upload" id="icnMenuUploadSync"></span> Upload Local</a>
+                              <a class="dropdown-item auth-logged-in" href="#" id="menuDownloadSync"><span class="fa fa-download" id="icnMenuDownloadSync"></span> Use Cloud</a>
+                              <a class="dropdown-item auth-logged-in" href="#" id="menuSyncConflicts">Resolve Conflicts <span id="menuConflictCount" class="tag tag-danger">0</span></a>
+                              <div class="dropdown-divider auth-logged-in"></div>
+                              <a class="dropdown-item auth-logged-in" href="#" id="menuLogout">Logout</a>
+                           </div>
+                        </div>
                         <button type="button" class="btn btn-primary tooltip-enable" data-toggle="modal" data-target="#helpModal">Help</button>
                      </li>
                   </div>
@@ -117,6 +122,37 @@
                   </div>
                </div>
             </div>
+            <div class="modal fade webplayer-auth-modal" id="loginModal" role="dialog" style="color:black;">
+               <div class="modal-dialog">
+                  <div class="modal-content">
+                     <form id="loginForm">
+                        <div class="modal-header">
+                           <button type="button" class="close" data-dismiss="modal">&times;</button>
+                           <h1 class="modal-title">Cloud Login</h1>
+                        </div>
+                        <div class="modal-body">
+                           <div class="form-group">
+                              <label for="loginUsername">Username</label>
+                              <input type="text" class="form-control" id="loginUsername" autocomplete="username" required>
+                           </div>
+                           <div class="form-group">
+                              <label for="loginPassword">Password</label>
+                              <input type="password" class="form-control" id="loginPassword" autocomplete="current-password" required>
+                           </div>
+                           <div class="form-group auth-register-only">
+                              <label for="loginPasswordConfirm">Confirm Password</label>
+                              <input type="password" class="form-control" id="loginPasswordConfirm" autocomplete="new-password">
+                           </div>
+                           <p id="loginMessage" class="text-danger" aria-live="polite"></p>
+                        </div>
+                        <div class="modal-footer">
+                           <button type="button" class="btn btn-default" id="btnRegister">Register</button>
+                           <button type="submit" class="btn btn-primary" id="btnLoginSubmit">Login</button>
+                        </div>
+                     </form>
+                  </div>
+               </div>
+            </div>
          </div>
          <!--/.navbar content-->
       </nav>
@@ -138,7 +174,7 @@
       <!--script src="//wzrd.in/standalone/browserfs@0.6.1"></script-->
       <script src="browserfs.min.js"></script>
       <script src="core_list.js"></script>
-      <script src="save-sync.js?v=20260602-114500"></script>
-      <script src="libretro.js?v=20260602-114500"></script>
+      <script src="save-sync.js?v=20260602-190000"></script>
+      <script src="libretro.js?v=20260602-190000"></script>
    </body>
 </html>
