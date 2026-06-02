@@ -88,6 +88,10 @@ canvas.webplayer {
   height: 600px;
 }
 
+canvas.webplayer.webplayer-hide-cursor {
+  cursor: none;
+}
+
 /**
  * Hack to make emscripten stop messing with the canvas size while in fullscreen.
  * Foiled again!
@@ -128,4 +132,57 @@ textarea {
 .navbar {
   box-shadow: none;
   border-radius: 0px;
+}
+
+.webplayer-navbar {
+  min-height: 0;
+  padding: 8px 0;
+}
+
+.webplayer-navbar-inner {
+  width: 100%;
+  max-width: none;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.webplayer-toolbar {
+  display: block;
+  max-width: calc(100vw - 72px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+.webplayer-toolbar-list,
+.webplayer-toolbar-items,
+.webplayer-toolbar-item {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  float: none;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.webplayer-toolbar .btn,
+.webplayer-toolbar .navbar-text {
+  flex: 0 0 auto;
+  margin-top: 0;
+  margin-bottom: 0;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
+.webplayer-toolbar .navbar-text {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.webplayer-toolbar .dropdown-menu {
+  white-space: normal;
 }

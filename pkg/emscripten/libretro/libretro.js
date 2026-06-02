@@ -5,7 +5,10 @@
  */
 
 const defaultCore = "dosbox_pure";
+const coreAssetVersion = "20260602-114500";
 var autoStart = true;
+var debugParams = new URLSearchParams(window.location.search);
+var disableSaveSync = !debugParams.has("sync");
 
 var BrowserFS = BrowserFS;
 var afs;
@@ -13,8 +16,10 @@ var zipTOC;
 var initializationCount = 0;
 var Module;
 var currentCore;
+var currentGame;
 var reloadTimeout;
 var retroArchRunning = false;
+var saveSyncReady = Promise.resolve();
 var canvas = document.getElementById("canvas");
 
 function modulePreRun(module) {
@@ -123,10 +128,89 @@ function appInitialized() {
    /* Need to wait for the file system, the wasm runtime, and the zip download
       to complete before enabling the Run button. */
    initializationCount++;
+   console.log("WEBPLAYER: appInitialized", {
+      count: initializationCount,
+      hasModule: !!Module,
+      hasCallMain: !!(Module && Module.callMain)
+   });
    if (initializationCount == 3) {
       setupFileSystem();
-      preLoadingComplete();
+      saveSyncReady = discoverCurrentGame().then(function(game) {
+         currentGame = game;
+         clearWebMouseOverrides();
+         return initSaveSync(game);
+      });
+      saveSyncReady.then(preLoadingComplete).catch(function(e) {
+         console.warn("WEBPLAYER: save sync init failed, continuing offline", e);
+         preLoadingComplete();
+      });
    }
+}
+
+function callRetroArchMain(reason) {
+   var args = (Module && Module.arguments) || ModuleBase.arguments || [];
+   console.log("WEBPLAYER: callMain requested", {
+      reason: reason,
+      hasModule: !!Module,
+      hasCallMain: !!(Module && Module.callMain),
+      args: args,
+      corePath: ModuleBase.corePath
+   });
+   if (!Module || !Module.callMain) {
+      console.error("WEBPLAYER: callMain skipped because module is not ready");
+      return;
+   }
+   try {
+      Module.callMain(args);
+      console.log("WEBPLAYER: callMain returned", {
+         reason: reason
+      });
+   } catch (e) {
+      console.error("WEBPLAYER: callMain failed", e);
+      throw e;
+   }
+}
+
+function initSaveSync(game) {
+   if (disableSaveSync) {
+      console.log("WEBPLAYER: save sync disabled", {
+         gameId: game ? game.gameId : "default"
+      });
+      return Promise.resolve();
+   }
+   if (!window.RetroArchSaveSync)
+      return Promise.resolve();
+   return window.RetroArchSaveSync.init({
+      Module: Module,
+      userId: "1",
+      gameId: game ? game.gameId : "default",
+      basePath: "/home/web_user/retroarch/userdata",
+      dirs: ["saves", "states"],
+      apiBase: "/api/sync/v1"
+   });
+}
+
+function discoverCurrentGame() {
+   return fetch("/api/sync/v1/games").then(function(resp) {
+      if (!resp.ok)
+         throw new Error("games API returned HTTP " + resp.status);
+      return resp.json();
+   }).then(function(games) {
+      games = Array.isArray(games) ? games : [];
+      var storedGameId = localStorage.getItem("gameId");
+      var game = games.find(function(item) {
+         return item.gameId === storedGameId;
+      }) || games[0] || null;
+      if (game)
+      {
+         localStorage.setItem("gameId", game.gameId);
+         console.log("WEBPLAYER: selected cloud game", game);
+      }
+      return game;
+   }).catch(function(e) {
+      console.warn("WEBPLAYER: failed to discover cloud games", e);
+      return null;
+   });
 }
 
 function preLoadingComplete() {
@@ -144,18 +228,6 @@ function preLoadingComplete() {
          startRetroArch();
       });
    }
-}
-
-function logBrowserFS() {
-   const origWrite = Module.FS.write;
-   Module.FS.write = function (stream, buffer, offset, length, position, canOwn) {
-   const path = stream && stream.path;
-   if (path && path.includes('/states/')) {
-      console.log('[FS.write] save state', { path, length });
-      debugger;
-   }
-   return origWrite.apply(this, arguments);
-};
 }
 
 function mountBrowserFS() {
@@ -179,7 +251,97 @@ function mountBrowserFS() {
    } catch (e) {
       console.error("WEBPLAYER: failed to create fake core files", e);
    }
-   logBrowserFS();
+}
+
+function upsertConfigValue(text, key, value) {
+   var line = key + ' = "' + value + '"';
+   var pattern = new RegExp("^" + key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*=.*$", "m");
+   if (pattern.test(text))
+      return text.replace(pattern, line);
+   if (text && text[text.length - 1] !== "\n")
+      text += "\n";
+   return text + line + "\n";
+}
+
+function clearWebMouseOverrides() {
+   restoreRetroArchWebDefaultMouseOptions();
+   restoreDosboxPureDefaultMouseOptions();
+}
+
+function hideCanvasCursor() {
+   if (!canvas || !retroArchRunning)
+      return;
+   canvas.classList.add("webplayer-hide-cursor");
+}
+
+function showCanvasCursor() {
+   if (!canvas)
+      return;
+   canvas.classList.remove("webplayer-hide-cursor");
+}
+
+function ensureDirectory(path) {
+   var parts = path.split("/");
+   var current = "";
+   for (var i = 0; i < parts.length; i++) {
+      if (!parts[i])
+         continue;
+      current += "/" + parts[i];
+      try {
+         Module.FS.mkdir(current);
+      } catch (e) {}
+   }
+}
+
+function restoreRetroArchWebDefaultMouseOptions() {
+   var path = "/home/web_user/retroarch/userdata/retroarch.cfg";
+   var text = "";
+   try {
+      text = Module.FS.readFile(path, {encoding: "utf8"});
+   } catch (e) {}
+
+   var next = text;
+   var autoGrab = text.match(/^input_auto_mouse_grab\s*=\s*"([^"]*)"/m);
+   if (autoGrab && autoGrab[1] === "true")
+      next = upsertConfigValue(next, "input_auto_mouse_grab", "false");
+
+   if (next !== text) {
+      Module.FS.writeFile(path, next);
+      console.log("WEBPLAYER: restored web default mouse auto grab setting");
+   }
+}
+
+function restoreDosboxPureDefaultMouseOptions() {
+   [
+      "/home/web_user/retroarch/userdata/retroarch-core-options.cfg",
+      "/home/web_user/retroarch/userdata/config/DOSBox-pure/DOSBox-pure.opt"
+   ].forEach(restoreDosboxPureMouseOptionsFile);
+}
+
+function restoreDosboxPureMouseOptionsFile(path) {
+   var text = "";
+   try {
+      text = Module.FS.readFile(path, {encoding: "utf8"});
+   } catch (e) {}
+
+   var next = text;
+   var mouseInput = text.match(/^dosbox_pure_mouse_input\s*=\s*"([^"]*)"/m);
+   if (mouseInput && mouseInput[1] === "direct")
+      next = upsertConfigValue(next, "dosbox_pure_mouse_input", "true");
+
+   var mouseSpeed = next.match(/^dosbox_pure_mouse_speed_factor\s*=\s*"([^"]*)"/m);
+   if (!mouseSpeed || mouseSpeed[1] !== "2.0")
+      next = upsertConfigValue(next, "dosbox_pure_mouse_speed_factor", "2.0");
+
+   if (next !== text) {
+      var parent = path.slice(0, path.lastIndexOf("/"));
+      ensureDirectory(parent);
+      Module.FS.writeFile(path, next);
+      console.log("WEBPLAYER: ensured DOSBox Pure mouse options", {
+         path: path,
+         speed: "2.0"
+      });
+   }
 }
 
 function setupFileSystem() {
@@ -212,6 +374,11 @@ function startRetroArch() {
    $('.webplayer').show();
    $('.webplayer-preview').hide();
    document.getElementById("btnRun").disabled = true;
+   console.log("WEBPLAYER: starting RetroArch", {
+      args: (Module && Module.arguments) || ModuleBase.arguments,
+      hasCallMain: !!(Module && Module.callMain),
+      corePath: ModuleBase.corePath
+   });
 
    $('#btnAdd').removeClass("disabled").removeAttr("disabled").click(function() {
       $('#btnRom').click();
@@ -232,12 +399,12 @@ function startRetroArch() {
    ModuleBase.onRuntimeInitialized = function() {
       setTimeout(function() {
          mountBrowserFS();
-         Module.callMain(Module.arguments);
+         callRetroArchMain("runtime-relaunch");
       }, 0);
    };
 
    retroArchRunning = true;
-   Module.callMain(Module.arguments);
+   callRetroArchMain("start");
 }
 
 function selectFiles(files) {
@@ -302,6 +469,72 @@ $(function() {
       placement: 'right'
    });
 
+   $('#btnSync').click(function() {
+      if (!window.RetroArchSaveSync)
+         return;
+      $('#icnSync').addClass('fa-spin');
+      window.RetroArchSaveSync.syncNow().catch(function(e) {
+         console.warn("WEBPLAYER: manual save sync failed", e);
+      }).then(function() {
+         $('#icnSync').removeClass('fa-spin');
+         renderSyncConflicts();
+      });
+   });
+
+   $('#btnUploadSync').click(function() {
+      if (!window.RetroArchSaveSync)
+         return;
+      $('#icnUploadSync').addClass('fa-spin');
+      window.RetroArchSaveSync.uploadNow().catch(function(e) {
+         console.warn("WEBPLAYER: manual save upload failed", e);
+      }).then(function() {
+         $('#icnUploadSync').removeClass('fa-spin');
+         renderSyncConflicts();
+      });
+   });
+
+   $('#btnDownloadSync').click(function() {
+      console.log("WEBPLAYER: Use Cloud clicked", {
+         hasSaveSync: !!window.RetroArchSaveSync
+      });
+      if (!window.RetroArchSaveSync)
+      {
+         console.warn("WEBPLAYER: Use Cloud ignored because save sync is not available");
+         return;
+      }
+      if (!confirm("Replace local saves and states with cloud data for this game?"))
+      {
+         console.log("WEBPLAYER: Use Cloud canceled by user");
+         return;
+      }
+      $('#icnDownloadSync').addClass('fa-spin');
+      window.RetroArchSaveSync.downloadNow().catch(function(e) {
+         console.warn("WEBPLAYER: manual cloud restore failed", e);
+      }).then(function() {
+         $('#icnDownloadSync').removeClass('fa-spin');
+         renderSyncConflicts();
+      });
+   });
+
+   $('#syncModal').on('show.bs.modal', function() {
+      renderSyncConflicts();
+   });
+
+   $('#syncConflictList').on('click', 'button[data-conflict-id]', function() {
+      var button = this;
+      var id = button.getAttribute('data-conflict-id');
+      var action = button.getAttribute('data-action');
+      button.disabled = true;
+      window.RetroArchSaveSync.resolveConflict(id, action).catch(function(e) {
+         console.warn("WEBPLAYER: failed to resolve sync conflict", e);
+      }).then(function() {
+         renderSyncConflicts();
+      });
+   });
+
+   canvas.addEventListener('mousedown', hideCanvasCursor);
+   canvas.addEventListener('mouseleave', showCanvasCursor);
+
    // Allow hiding the top menu.
    $('.showMenu').hide();
    $('#btnHideMenu, .showMenu').click(function() {
@@ -338,6 +571,8 @@ $(function() {
       123: "F12"
    };
    window.addEventListener('keydown', function(e) {
+      if (e.which === 27)
+         showCanvasCursor();
       if (keys[e.which]) {
          e.preventDefault();
       }
@@ -371,6 +606,74 @@ $(function() {
    zipfsInit();
 });
 
+function conflictSideText(label, side) {
+   if (!side)
+      return label + ": missing";
+   return label + ": " +
+      (side.hash == null ? "deleted" : "present") +
+      ", hash=" + (side.hash ? side.hash.slice(0, 12) : "-");
+}
+
+function renderSyncConflicts() {
+   if (!window.RetroArchSaveSync)
+      return;
+   var conflicts = window.RetroArchSaveSync.getPendingConflicts();
+   var list = document.getElementById("syncConflictList");
+   var count = document.getElementById("syncConflicts");
+   if (count)
+      count.textContent = String(conflicts.length);
+   if (!list)
+      return;
+   list.innerHTML = "";
+   if (!conflicts.length) {
+      var empty = document.createElement("p");
+      empty.textContent = "No pending conflicts.";
+      list.appendChild(empty);
+      return;
+   }
+   conflicts.forEach(function(conflict) {
+      var card = document.createElement("div");
+      card.className = "card";
+      card.style.marginBottom = "12px";
+
+      var body = document.createElement("div");
+      body.className = "card-block";
+
+      var title = document.createElement("h4");
+      title.className = "card-title";
+      title.textContent = conflict.path;
+      body.appendChild(title);
+
+      var reason = document.createElement("p");
+      reason.textContent = "Reason: " + conflict.reason;
+      body.appendChild(reason);
+
+      var local = document.createElement("p");
+      local.textContent = conflictSideText("Local", conflict.local);
+      body.appendChild(local);
+
+      var remote = document.createElement("p");
+      remote.textContent = conflictSideText("Remote", conflict.remote);
+      body.appendChild(remote);
+
+      [
+         ["use_local", "Use Local"],
+         ["use_remote", "Use Remote"],
+         ["keep_both", "Keep Both"]
+      ].forEach(function(item) {
+         var button = document.createElement("button");
+         button.className = "btn btn-primary";
+         button.setAttribute("data-conflict-id", conflict.id);
+         button.setAttribute("data-action", item[0]);
+         button.textContent = item[1];
+         body.appendChild(button);
+      });
+
+      card.appendChild(body);
+      list.appendChild(card);
+   });
+}
+
 function loadCoreFallback(currentCore) {
    if (currentCore == defaultCore) {
       alert("Error: could not load default core!");
@@ -385,14 +688,29 @@ function loadCore(core, args) {
    var coreTitle = $('#core-selector a[data-core="' + core + '"]').addClass('active').text();
    $('#dropdownMenu1').text(coreTitle);
 
+   var wasmUrl = "./" + core + "_libretro.wasm?v=" + coreAssetVersion;
    ModuleBase.arguments = args || ["-v", "--menu", "-c", "/home/web_user/retroarch/userdata/retroarch.cfg"];
    ModuleBase.preRun = [modulePreRun];
    ModuleBase.canvas = canvas;
    ModuleBase.corePath = "/home/web_user/retroarch/cores/" + core + "_libretro.core";
+   ModuleBase.locateFile = function(path, prefix) {
+      if (path === core + "_libretro.wasm")
+         return wasmUrl;
+      return (prefix || "") + path;
+   };
 
    // Load the Core's related JavaScript.
-   import("./" + core + "_libretro.js").then(script => {
-      script.default(Object.assign({}, ModuleBase)).then(mod => {
+   console.log("WEBPLAYER: loading core", {
+      core: core,
+      js: "./" + core + "_libretro.js?v=" + coreAssetVersion,
+      wasm: wasmUrl,
+      args: ModuleBase.arguments,
+      corePath: ModuleBase.corePath
+   });
+   import("./" + core + "_libretro.js?v=" + coreAssetVersion).then(script => {
+      var module = Object.assign({}, ModuleBase);
+      Module = module;
+      script.default(module).then(mod => {
          Module = mod;
       }).catch(err => {
          console.error("Couldn't instantiate module", err);
@@ -412,6 +730,11 @@ function relaunch(core, content) {
    if (!core) core = ModuleBase.corePath;
 
    if (!content) content = "--menu";
+   console.log("WEBPLAYER: relaunch requested", {
+      core: core,
+      content: content,
+      currentModuleBaseCorePath: ModuleBase.corePath
+   });
 
    Module = null;
    if (reloadTimeout) {

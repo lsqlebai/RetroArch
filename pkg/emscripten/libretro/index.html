@@ -15,14 +15,14 @@
    </head>
    <body>
       <!--Navbar-->
-      <nav class="navbar navbar-dark bg-primary">
-         <div class="container">
+      <nav class="navbar navbar-dark bg-primary webplayer-navbar">
+         <div class="container webplayer-navbar-inner">
             <!--navbar content-->
-            <div class="navbar-toggleable-xs">
+            <div class="navbar-toggleable-xs webplayer-toolbar">
                <!--Links-->
-               <ul class="nav navbar-nav">
-                  <div class="dropdown">
-                     <li class="nav-item dropdown">
+               <ul class="nav navbar-nav webplayer-toolbar-list">
+                  <div class="dropdown webplayer-toolbar-items">
+                     <li class="nav-item dropdown webplayer-toolbar-item">
                         <button class="btn btn-primary dropdown-toggle" type="button" id="dropdownMenu1" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Core Selection</button>
                         <div class="dropdown-menu dropdown-primary" aria-labelledby="dropdownMenu1" data-dropdown-in="fadeIn" data-dropdown-out="fadeOut" id="core-selector"></div>
                         <button class="btn btn-primary disabled" id="btnRun" disabled>
@@ -41,6 +41,19 @@
                         <button class="btn btn-primary disabled tooltip-enable" id="btnFullscreen" title="Fullscreen" disabled>
                         <span class="fa fa-desktop" id="icnFullscreen"></span> <span class="sr-only">Fullscreen</span>
                         </button>
+                        <button class="btn btn-primary tooltip-enable" id="btnSync" title="Sync saves and states">
+                        <span class="fa fa-refresh" id="icnSync"></span> Sync <span id="syncConflicts" class="tag tag-danger">0</span>
+                        </button>
+                        <button class="btn btn-primary tooltip-enable" id="btnUploadSync" title="Upload local saves and states">
+                        <span class="fa fa-upload" id="icnUploadSync"></span> Upload
+                        </button>
+                        <button class="btn btn-primary tooltip-enable" id="btnDownloadSync" title="Replace local saves and states with cloud data">
+                        <span class="fa fa-download" id="icnDownloadSync"></span> Use Cloud
+                        </button>
+                        <button class="btn btn-primary tooltip-enable" id="btnSyncConflicts" title="Resolve sync conflicts" data-toggle="modal" data-target="#syncModal">
+                        Resolve
+                        </button>
+                        <span class="navbar-text" id="syncStatus">sync idle</span>
                         <button type="button" class="btn btn-primary tooltip-enable" data-toggle="modal" data-target="#helpModal">Help</button>
                      </li>
                   </div>
@@ -88,6 +101,22 @@
                   </div>
                </div>
             </div>
+            <div class="modal fade" id="syncModal" role="dialog" style="color:black;">
+               <div class="modal-dialog modal-lg">
+                  <div class="modal-content">
+                     <div class="modal-header">
+                        <button type="button" class="close" data-dismiss="modal">&times;</button>
+                        <h1 class="modal-title">Sync Conflicts</h1>
+                     </div>
+                     <div class="modal-body" id="syncConflictList">
+                        <p>No pending conflicts.</p>
+                     </div>
+                     <div class="modal-footer">
+                        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+                     </div>
+                  </div>
+               </div>
+            </div>
          </div>
          <!--/.navbar content-->
       </nav>
@@ -109,6 +138,7 @@
       <!--script src="//wzrd.in/standalone/browserfs@0.6.1"></script-->
       <script src="browserfs.min.js"></script>
       <script src="core_list.js"></script>
-      <script src="libretro.js"></script>
+      <script src="save-sync.js?v=20260602-114500"></script>
+      <script src="libretro.js?v=20260602-114500"></script>
    </body>
 </html>

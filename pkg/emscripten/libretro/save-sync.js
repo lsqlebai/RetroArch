@@ -1,0 +1,914 @@
+/**
+ * RetroArch cloud_sync-compatible synchronization for the single-threaded web
+ * player.
+ *
+ * This mirrors RetroArch's C-layer task_cloudsync.c model:
+ * - server manifest is an array of {path, hash}
+ * - local manifest is the last successfully synced {path, hash} array
+ * - current manifest is built by scanning saves/states
+ * - hash === null is a tombstone
+ *
+ * Do not inspect BrowserFS' IndexedDB key/value store directly: those keys are
+ * BrowserFS inode/data blocks, not RetroArch file paths.
+ */
+(function(global) {
+   "use strict";
+
+   var DEFAULT_BASE_PATH = "/home/web_user/retroarch/userdata";
+   var DEFAULT_DIRS = ["saves", "states"];
+   var DEFAULT_API_BASE = "/api/sync/v1";
+   var DEFAULT_GAME_ID = "default";
+   var LOCAL_MANIFEST_KEY = "retroarch-cloud-sync-local-manifest-v1";
+   var CONFLICTS_KEY = "retroarch-cloud-sync-conflicts-v1";
+   var DEVICE_ID_KEY = "retroarch-cloud-sync-device-id";
+   var SYNC_DEBOUNCE_MS = 8000;
+   var INITIAL_SYNC_TIMEOUT_MS = 5000;
+
+   function makeDeviceId() {
+      if (global.crypto && global.crypto.randomUUID)
+         return global.crypto.randomUUID();
+      return "device-" + Math.random().toString(16).slice(2) + Date.now();
+   }
+
+   function safeJsonParse(value, fallback) {
+      if (!value)
+         return fallback;
+      try {
+         return JSON.parse(value);
+      } catch (e) {
+         return fallback;
+      }
+   }
+
+   function pathJoin(a, b) {
+      return a.replace(/\/+$/, "") + "/" + b.replace(/^\/+/, "");
+   }
+
+   function normalizeRelPath(path, basePath) {
+      if (!path)
+         return null;
+      if (path.indexOf(basePath + "/") === 0)
+         path = path.slice(basePath.length + 1);
+      path = path.replace(/^\/+/, "");
+      if (!path || path.indexOf("..") >= 0)
+         return null;
+      return path;
+   }
+
+   function isSyncedRelPath(path, dirs) {
+      for (var i = 0; i < dirs.length; i++)
+      {
+         if (path === dirs[i] || path.indexOf(dirs[i] + "/") === 0)
+            return true;
+      }
+      return false;
+   }
+
+   function manifestToMap(manifest) {
+      var map = {};
+      (manifest || []).forEach(function(item) {
+         if (item && item.path)
+            map[item.path] = item.hash == null ? null : item.hash;
+      });
+      return map;
+   }
+
+   function mapToManifest(map) {
+      return Object.keys(map).sort().map(function(path) {
+         return {path: path, hash: map[path] == null ? null : map[path]};
+      });
+   }
+
+   function bytesToBase64(bytes) {
+      var chunk = 0x8000;
+      var parts = [];
+      for (var i = 0; i < bytes.length; i += chunk)
+         parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + chunk)));
+      return btoa(parts.join(""));
+   }
+
+   function base64ToBytes(text) {
+      var binary = atob(text || "");
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++)
+         bytes[i] = binary.charCodeAt(i);
+      return bytes;
+   }
+
+   function md5(bytes) {
+      function add32(a, b) { return (a + b) & 0xffffffff; }
+      function rol(num, cnt) { return (num << cnt) | (num >>> (32 - cnt)); }
+      function cmn(q, a, b, x, s, t) { return add32(rol(add32(add32(a, q), add32(x, t)), s), b); }
+      function ff(a, b, c, d, x, s, t) { return cmn((b & c) | ((~b) & d), a, b, x, s, t); }
+      function gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & (~d)), a, b, x, s, t); }
+      function hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
+      function ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | (~d)), a, b, x, s, t); }
+      function hex(x) {
+         var out = "";
+         for (var i = 0; i < 4; i++)
+            out += ((x >> (i * 8 + 4)) & 0x0f).toString(16) + ((x >> (i * 8)) & 0x0f).toString(16);
+         return out;
+      }
+
+      var len = bytes.length;
+      var words = [];
+      var i;
+      for (i = 0; i < len; i++)
+         words[i >> 2] = (words[i >> 2] || 0) | (bytes[i] << ((i % 4) * 8));
+      words[len >> 2] = (words[len >> 2] || 0) | (0x80 << ((len % 4) * 8));
+      words[(((len + 8) >> 6) << 4) + 14] = len * 8;
+
+      var a = 1732584193;
+      var b = -271733879;
+      var c = -1732584194;
+      var d = 271733878;
+
+      for (i = 0; i < words.length; i += 16)
+      {
+         var olda = a, oldb = b, oldc = c, oldd = d;
+         a = ff(a, b, c, d, words[i + 0] || 0, 7, -680876936);
+         d = ff(d, a, b, c, words[i + 1] || 0, 12, -389564586);
+         c = ff(c, d, a, b, words[i + 2] || 0, 17, 606105819);
+         b = ff(b, c, d, a, words[i + 3] || 0, 22, -1044525330);
+         a = ff(a, b, c, d, words[i + 4] || 0, 7, -176418897);
+         d = ff(d, a, b, c, words[i + 5] || 0, 12, 1200080426);
+         c = ff(c, d, a, b, words[i + 6] || 0, 17, -1473231341);
+         b = ff(b, c, d, a, words[i + 7] || 0, 22, -45705983);
+         a = ff(a, b, c, d, words[i + 8] || 0, 7, 1770035416);
+         d = ff(d, a, b, c, words[i + 9] || 0, 12, -1958414417);
+         c = ff(c, d, a, b, words[i + 10] || 0, 17, -42063);
+         b = ff(b, c, d, a, words[i + 11] || 0, 22, -1990404162);
+         a = ff(a, b, c, d, words[i + 12] || 0, 7, 1804603682);
+         d = ff(d, a, b, c, words[i + 13] || 0, 12, -40341101);
+         c = ff(c, d, a, b, words[i + 14] || 0, 17, -1502002290);
+         b = ff(b, c, d, a, words[i + 15] || 0, 22, 1236535329);
+
+         a = gg(a, b, c, d, words[i + 1] || 0, 5, -165796510);
+         d = gg(d, a, b, c, words[i + 6] || 0, 9, -1069501632);
+         c = gg(c, d, a, b, words[i + 11] || 0, 14, 643717713);
+         b = gg(b, c, d, a, words[i + 0] || 0, 20, -373897302);
+         a = gg(a, b, c, d, words[i + 5] || 0, 5, -701558691);
+         d = gg(d, a, b, c, words[i + 10] || 0, 9, 38016083);
+         c = gg(c, d, a, b, words[i + 15] || 0, 14, -660478335);
+         b = gg(b, c, d, a, words[i + 4] || 0, 20, -405537848);
+         a = gg(a, b, c, d, words[i + 9] || 0, 5, 568446438);
+         d = gg(d, a, b, c, words[i + 14] || 0, 9, -1019803690);
+         c = gg(c, d, a, b, words[i + 3] || 0, 14, -187363961);
+         b = gg(b, c, d, a, words[i + 8] || 0, 20, 1163531501);
+         a = gg(a, b, c, d, words[i + 13] || 0, 5, -1444681467);
+         d = gg(d, a, b, c, words[i + 2] || 0, 9, -51403784);
+         c = gg(c, d, a, b, words[i + 7] || 0, 14, 1735328473);
+         b = gg(b, c, d, a, words[i + 12] || 0, 20, -1926607734);
+
+         a = hh(a, b, c, d, words[i + 5] || 0, 4, -378558);
+         d = hh(d, a, b, c, words[i + 8] || 0, 11, -2022574463);
+         c = hh(c, d, a, b, words[i + 11] || 0, 16, 1839030562);
+         b = hh(b, c, d, a, words[i + 14] || 0, 23, -35309556);
+         a = hh(a, b, c, d, words[i + 1] || 0, 4, -1530992060);
+         d = hh(d, a, b, c, words[i + 4] || 0, 11, 1272893353);
+         c = hh(c, d, a, b, words[i + 7] || 0, 16, -155497632);
+         b = hh(b, c, d, a, words[i + 10] || 0, 23, -1094730640);
+         a = hh(a, b, c, d, words[i + 13] || 0, 4, 681279174);
+         d = hh(d, a, b, c, words[i + 0] || 0, 11, -358537222);
+         c = hh(c, d, a, b, words[i + 3] || 0, 16, -722521979);
+         b = hh(b, c, d, a, words[i + 6] || 0, 23, 76029189);
+         a = hh(a, b, c, d, words[i + 9] || 0, 4, -640364487);
+         d = hh(d, a, b, c, words[i + 12] || 0, 11, -421815835);
+         c = hh(c, d, a, b, words[i + 15] || 0, 16, 530742520);
+         b = hh(b, c, d, a, words[i + 2] || 0, 23, -995338651);
+
+         a = ii(a, b, c, d, words[i + 0] || 0, 6, -198630844);
+         d = ii(d, a, b, c, words[i + 7] || 0, 10, 1126891415);
+         c = ii(c, d, a, b, words[i + 14] || 0, 15, -1416354905);
+         b = ii(b, c, d, a, words[i + 5] || 0, 21, -57434055);
+         a = ii(a, b, c, d, words[i + 12] || 0, 6, 1700485571);
+         d = ii(d, a, b, c, words[i + 3] || 0, 10, -1894986606);
+         c = ii(c, d, a, b, words[i + 10] || 0, 15, -1051523);
+         b = ii(b, c, d, a, words[i + 1] || 0, 21, -2054922799);
+         a = ii(a, b, c, d, words[i + 8] || 0, 6, 1873313359);
+         d = ii(d, a, b, c, words[i + 15] || 0, 10, -30611744);
+         c = ii(c, d, a, b, words[i + 6] || 0, 15, -1560198380);
+         b = ii(b, c, d, a, words[i + 13] || 0, 21, 1309151649);
+         a = ii(a, b, c, d, words[i + 4] || 0, 6, -145523070);
+         d = ii(d, a, b, c, words[i + 11] || 0, 10, -1120210379);
+         c = ii(c, d, a, b, words[i + 2] || 0, 15, 718787259);
+         b = ii(b, c, d, a, words[i + 9] || 0, 21, -343485551);
+
+         a = add32(a, olda);
+         b = add32(b, oldb);
+         c = add32(c, oldc);
+         d = add32(d, oldd);
+      }
+      return hex(a) + hex(b) + hex(c) + hex(d);
+   }
+
+   function requestJson(url, options) {
+      options = options || {};
+      options.headers = Object.assign({
+         "Accept": "application/json",
+         "Content-Type": "application/json"
+      }, options.headers || {});
+      return fetch(url, options).then(function(resp) {
+         return resp.text().then(function(text) {
+            var data = safeJsonParse(text, {});
+            if (!resp.ok)
+            {
+               var err = new Error(data.error || ("HTTP " + resp.status));
+               err.response = data;
+               err.status = resp.status;
+               throw err;
+            }
+            return data;
+         });
+      });
+   }
+
+   function SaveSync() {
+      this.Module = null;
+      this.basePath = DEFAULT_BASE_PATH;
+      this.dirs = DEFAULT_DIRS.slice();
+      this.apiBase = DEFAULT_API_BASE;
+      this.userId = "1";
+      this.gameId = DEFAULT_GAME_ID;
+      this.deviceId = localStorage.getItem(DEVICE_ID_KEY) || makeDeviceId();
+      this.localManifest = [];
+      this.conflicts = [];
+      this.initialized = false;
+      this.syncing = false;
+      this.pendingTimer = null;
+      this.suppressDirty = false;
+      this.hasDirtyHint = false;
+      localStorage.setItem(DEVICE_ID_KEY, this.deviceId);
+   }
+
+   SaveSync.prototype.storageKey = function(key) {
+      return key + ":" + this.userId + ":" + this.gameId;
+   };
+
+   SaveSync.prototype.loadScopedState = function() {
+      this.localManifest = safeJsonParse(localStorage.getItem(
+            this.storageKey(LOCAL_MANIFEST_KEY)), []);
+      this.conflicts = safeJsonParse(localStorage.getItem(
+            this.storageKey(CONFLICTS_KEY)), []);
+   };
+
+   SaveSync.prototype.saveLocalManifest = function(manifest) {
+      this.localManifest = manifest || [];
+      localStorage.setItem(this.storageKey(LOCAL_MANIFEST_KEY),
+            JSON.stringify(this.localManifest));
+   };
+
+   SaveSync.prototype.saveConflicts = function() {
+      localStorage.setItem(this.storageKey(CONFLICTS_KEY),
+            JSON.stringify(this.conflicts || []));
+   };
+
+   SaveSync.prototype.setStatus = function(status, detail) {
+      console.log("[SaveSync]", status, detail || "");
+      var el = document.getElementById("syncStatus");
+      if (el)
+         el.textContent = detail ? status + ": " + detail : status;
+      var conflicts = document.getElementById("syncConflicts");
+      if (conflicts)
+         conflicts.textContent = String(this.getPendingConflicts().length);
+   };
+
+   SaveSync.prototype.init = async function(options) {
+      options = options || {};
+      this.Module = options.Module;
+      this.basePath = options.basePath || this.basePath;
+      this.dirs = options.dirs || this.dirs;
+      this.apiBase = options.apiBase || this.apiBase;
+      this.userId = options.userId || this.userId;
+      this.gameId = options.gameId || this.gameId;
+      this.loadScopedState();
+      this.installFSHooks();
+      this.initialized = true;
+      this.setStatus("initializing");
+      try {
+         await this.syncWithTimeout(INITIAL_SYNC_TIMEOUT_MS);
+      } catch (e) {
+         this.setStatus("offline", e.message || String(e));
+      }
+   };
+
+   SaveSync.prototype.syncWithTimeout = function(ms) {
+      var self = this;
+      return Promise.race([
+         self.syncNow(),
+         new Promise(function(_, reject) {
+            setTimeout(function() {
+               reject(new Error("initial sync timed out"));
+            }, ms);
+         })
+      ]);
+   };
+
+   SaveSync.prototype.installFSHooks = function() {
+      var self = this;
+      var FS = this.Module && this.Module.FS;
+      if (!FS || FS.__saveSyncHooksInstalled)
+         return;
+      FS.__saveSyncHooksInstalled = true;
+
+      function mark(path) {
+         if (self.suppressDirty)
+            return;
+         var rel = normalizeRelPath(path, self.basePath);
+         if (rel && isSyncedRelPath(rel, self.dirs))
+         {
+            self.hasDirtyHint = true;
+            self.scheduleSync();
+         }
+      }
+
+      var origWrite = FS.write;
+      FS.write = function(stream, buffer, offset, length, position, canOwn) {
+         var ret = origWrite.apply(this, arguments);
+         if (stream && stream.path)
+            mark(stream.path);
+         return ret;
+      };
+
+      var origWriteFile = FS.writeFile;
+      FS.writeFile = function(path, data, opts) {
+         var ret = origWriteFile.apply(this, arguments);
+         mark(path);
+         return ret;
+      };
+
+      var origUnlink = FS.unlink;
+      FS.unlink = function(path) {
+         var ret = origUnlink.apply(this, arguments);
+         mark(path);
+         return ret;
+      };
+   };
+
+   SaveSync.prototype.scheduleSync = function() {
+      var self = this;
+      if (this.pendingTimer)
+         clearTimeout(this.pendingTimer);
+      this.pendingTimer = setTimeout(function() {
+         self.syncNow().catch(function(e) {
+            self.setStatus("offline", e.message || String(e));
+         });
+      }, SYNC_DEBOUNCE_MS);
+   };
+
+   SaveSync.prototype.readdir = function(path) {
+      try {
+         return this.Module.FS.readdir(path).filter(function(name) {
+            return name !== "." && name !== "..";
+         });
+      } catch (e) {
+         return [];
+      }
+   };
+
+   SaveSync.prototype.stat = function(path) {
+      try {
+         return this.Module.FS.stat(path);
+      } catch (e) {
+         return null;
+      }
+   };
+
+   SaveSync.prototype.listTree = function(relDir) {
+      var self = this;
+      var out = [];
+      function walk(relPath) {
+         var abs = pathJoin(self.basePath, relPath);
+         var entries = self.readdir(abs);
+         for (var i = 0; i < entries.length; i++)
+         {
+            var childRel = relPath + "/" + entries[i];
+            var childAbs = pathJoin(self.basePath, childRel);
+            var st = self.stat(childAbs);
+            if (!st)
+               continue;
+            if (self.Module.FS.isDir(st.mode))
+               walk(childRel);
+            else
+               out.push(childRel);
+         }
+      }
+      walk(relDir);
+      return out;
+   };
+
+   SaveSync.prototype.buildCurrentManifest = async function() {
+      var map = {};
+      for (var i = 0; i < this.dirs.length; i++)
+      {
+         var items = this.listTree(this.dirs[i]);
+         for (var j = 0; j < items.length; j++)
+         {
+            var relPath = items[j];
+            var data = this.Module.FS.readFile(pathJoin(this.basePath, relPath), {encoding: "binary"});
+            map[relPath] = await md5(data);
+         }
+      }
+      return mapToManifest(map);
+   };
+
+   SaveSync.prototype.fetchServerManifest = function() {
+      return requestJson(this.apiBase + "/manifest?userId=" + encodeURIComponent(this.userId) +
+            "&gameId=" + encodeURIComponent(this.gameId))
+         .then(function(data) {
+            return Array.isArray(data) ? data : (data.files || []);
+         });
+   };
+
+   SaveSync.prototype.putServerManifest = function(manifest) {
+      return requestJson(this.apiBase + "/manifest?userId=" + encodeURIComponent(this.userId) +
+            "&gameId=" + encodeURIComponent(this.gameId), {
+         method: "PUT",
+         body: JSON.stringify(manifest)
+      });
+   };
+
+   SaveSync.prototype.pullFile = async function(relPath) {
+      var data = await requestJson(this.apiBase + "/file?userId=" + encodeURIComponent(this.userId) +
+            "&gameId=" + encodeURIComponent(this.gameId) +
+            "&path=" + encodeURIComponent(relPath));
+      return base64ToBytes(data.data);
+   };
+
+   SaveSync.prototype.pushFile = async function(relPath) {
+      var bytes = this.Module.FS.readFile(pathJoin(this.basePath, relPath), {encoding: "binary"});
+      var result = await requestJson(this.apiBase + "/file?userId=" + encodeURIComponent(this.userId) +
+            "&gameId=" + encodeURIComponent(this.gameId), {
+         method: "PUT",
+         body: JSON.stringify({
+            path: relPath,
+            deviceId: this.deviceId,
+            data: bytesToBase64(bytes)
+         })
+      });
+      return result.hash;
+   };
+
+   SaveSync.prototype.deleteRemoteFile = function(relPath) {
+      return requestJson(this.apiBase + "/file?userId=" + encodeURIComponent(this.userId) +
+            "&gameId=" + encodeURIComponent(this.gameId), {
+         method: "DELETE",
+         body: JSON.stringify({path: relPath, deviceId: this.deviceId})
+      });
+   };
+
+   SaveSync.prototype.applyRemoteFile = async function(relPath, hash) {
+      var abs = pathJoin(this.basePath, relPath);
+      this.suppressDirty = true;
+      try {
+         if (hash == null)
+         {
+            try {
+               this.Module.FS.unlink(abs);
+            } catch (e) {}
+            return;
+         }
+         var parent = abs.slice(0, abs.lastIndexOf("/"));
+         this.Module.FS.mkdirTree(parent);
+         this.Module.FS.writeFile(abs, await this.pullFile(relPath));
+      } finally {
+         this.suppressDirty = false;
+      }
+   };
+
+   SaveSync.prototype.addConflict = function(path, localHash, remoteHash, baseHash, reason) {
+      var exists = this.conflicts.some(function(c) {
+         return c.path === path && c.status === "pending";
+      });
+      if (!exists)
+      {
+         this.conflicts.push({
+            id: "conflict-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+            path: path,
+            reason: reason,
+            local: {hash: localHash},
+            remote: {hash: remoteHash},
+            base: {hash: baseHash},
+            status: "pending",
+            createdAt: new Date().toISOString()
+         });
+         this.saveConflicts();
+      }
+      this.setStatus("conflict", path);
+   };
+
+   SaveSync.prototype.getPendingConflicts = function() {
+      return (this.conflicts || []).filter(function(conflict) {
+         return conflict.status === "pending";
+      });
+   };
+
+   SaveSync.prototype.conflictCopyPath = function(relPath) {
+      var stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      var slash = relPath.lastIndexOf("/");
+      var dot = relPath.lastIndexOf(".");
+      if (dot <= slash)
+         return relPath + ".local-conflict." + stamp;
+      return relPath.slice(0, dot) + ".local-conflict." + stamp + relPath.slice(dot);
+   };
+
+   SaveSync.prototype.resolveConflict = async function(id, action) {
+      var conflict = this.conflicts.find(function(item) {
+         return item.id === id;
+      });
+      if (!conflict || conflict.status !== "pending")
+         return;
+
+      if (action === "use_remote")
+      {
+         await this.applyRemoteFile(conflict.path, conflict.remote.hash);
+      }
+      else if (action === "use_local")
+      {
+         if (conflict.local.hash == null)
+            await this.deleteRemoteFile(conflict.path);
+         else
+            conflict.local.hash = await this.pushFile(conflict.path);
+      }
+      else if (action === "keep_both")
+      {
+         if (conflict.local.hash != null)
+         {
+            var copyPath = this.conflictCopyPath(conflict.path);
+            var source = this.Module.FS.readFile(pathJoin(this.basePath, conflict.path), {encoding: "binary"});
+            var copyAbs = pathJoin(this.basePath, copyPath);
+            this.Module.FS.mkdirTree(copyAbs.slice(0, copyAbs.lastIndexOf("/")));
+            this.Module.FS.writeFile(copyAbs, source);
+         }
+         await this.applyRemoteFile(conflict.path, conflict.remote.hash);
+      }
+
+      conflict.status = "resolved";
+      conflict.resolution = action;
+      conflict.resolvedAt = new Date().toISOString();
+      this.saveConflicts();
+
+      var serverMap = manifestToMap(await this.fetchServerManifest());
+      var localMap = manifestToMap(this.localManifest);
+      if (action === "use_remote")
+      {
+         localMap[conflict.path] = conflict.remote.hash == null ? null : conflict.remote.hash;
+      }
+      else if (action === "use_local")
+      {
+         serverMap[conflict.path] = conflict.local.hash == null ? null : conflict.local.hash;
+         localMap[conflict.path] = serverMap[conflict.path];
+      }
+      else if (action === "keep_both")
+      {
+         localMap[conflict.path] = conflict.remote.hash == null ? null : conflict.remote.hash;
+      }
+      await this.putServerManifest(mapToManifest(serverMap));
+      this.saveLocalManifest(mapToManifest(localMap));
+      await this.syncNow();
+   };
+
+   SaveSync.prototype.syncNow = async function() {
+      if (!this.initialized && !this.Module)
+         return;
+      if (this.syncing)
+         return;
+
+      this.syncing = true;
+      this.setStatus("syncing");
+      try {
+         var serverMap = manifestToMap(await this.fetchServerManifest());
+         var localMap = manifestToMap(this.localManifest);
+         var currentMap = manifestToMap(await this.buildCurrentManifest());
+         var updatedServer = Object.assign({}, serverMap);
+         var updatedLocal = {};
+         var paths = {};
+         var path;
+
+         for (path in serverMap) paths[path] = true;
+         for (path in localMap) paths[path] = true;
+         for (path in currentMap) paths[path] = true;
+
+         for (path in paths)
+         {
+            var serverHas = Object.prototype.hasOwnProperty.call(serverMap, path);
+            var localHas = Object.prototype.hasOwnProperty.call(localMap, path);
+            var currentHas = Object.prototype.hasOwnProperty.call(currentMap, path);
+            var serverHash = serverHas ? serverMap[path] : undefined;
+            var localHash = localHas ? localMap[path] : undefined;
+            var currentHash = currentHas ? currentMap[path] : undefined;
+
+            if (!localHas)
+            {
+               if (serverHas && !currentHas)
+               {
+                  if (serverHash != null)
+                     await this.applyRemoteFile(path, serverHash);
+                  updatedLocal[path] = serverHash == null ? null : serverHash;
+               }
+               else if (!serverHas && currentHas)
+               {
+                  updatedServer[path] = await this.pushFile(path);
+                  updatedLocal[path] = updatedServer[path];
+               }
+               else if (serverHas && currentHas)
+               {
+                  if (serverHash === currentHash)
+                     updatedLocal[path] = currentHash;
+                  else
+                     this.addConflict(path, currentHash, serverHash, undefined, "untracked-local-vs-remote");
+               }
+               continue;
+            }
+
+            if (serverHas && currentHas)
+            {
+               var serverChanged = serverHash !== localHash;
+               var currentChanged = currentHash !== localHash;
+
+               if (!serverChanged && !currentChanged)
+                  updatedLocal[path] = localHash;
+               else if (serverChanged && !currentChanged)
+               {
+                  await this.applyRemoteFile(path, serverHash);
+                  updatedLocal[path] = serverHash == null ? null : serverHash;
+               }
+               else if (!serverChanged && currentChanged)
+               {
+                  updatedServer[path] = await this.pushFile(path);
+                  updatedLocal[path] = updatedServer[path];
+               }
+               else
+                  this.addConflict(path, currentHash, serverHash, localHash, "local-change-vs-remote-change");
+               continue;
+            }
+
+            if (serverHas && !currentHas)
+            {
+               if (serverHash === localHash)
+               {
+                  await this.deleteRemoteFile(path);
+                  updatedServer[path] = null;
+                  updatedLocal[path] = null;
+               }
+               else if (localHash == null)
+                  updatedLocal[path] = serverHash;
+               else
+                  this.addConflict(path, null, serverHash, localHash, "local-delete-vs-remote-change");
+               continue;
+            }
+
+            if (!serverHas && currentHas)
+            {
+               updatedServer[path] = await this.pushFile(path);
+               updatedLocal[path] = updatedServer[path];
+               continue;
+            }
+
+            if (!serverHas && !currentHas)
+            {
+               updatedServer[path] = null;
+               updatedLocal[path] = null;
+            }
+         }
+
+         await this.putServerManifest(mapToManifest(updatedServer));
+         this.saveLocalManifest(mapToManifest(updatedLocal));
+         this.hasDirtyHint = false;
+         this.setStatus(this.getPendingConflicts().length ? "conflict" : "synced");
+      } finally {
+         this.syncing = false;
+      }
+   };
+
+   SaveSync.prototype.uploadNow = async function() {
+      if (!this.initialized && !this.Module)
+         return;
+      if (this.syncing)
+         return;
+
+      if (this.pendingTimer)
+      {
+         clearTimeout(this.pendingTimer);
+         this.pendingTimer = null;
+      }
+
+      this.syncing = true;
+      this.setStatus("uploading");
+      try {
+         var serverMap = manifestToMap(await this.fetchServerManifest());
+         var localMap = manifestToMap(this.localManifest);
+         var currentMap = manifestToMap(await this.buildCurrentManifest());
+         var updatedServer = Object.assign({}, serverMap);
+         var updatedLocal = Object.assign({}, localMap);
+         var paths = {};
+         var path;
+
+         for (path in serverMap) paths[path] = true;
+         for (path in localMap) paths[path] = true;
+         for (path in currentMap) paths[path] = true;
+
+         for (path in paths)
+         {
+            var serverHas = Object.prototype.hasOwnProperty.call(serverMap, path);
+            var localHas = Object.prototype.hasOwnProperty.call(localMap, path);
+            var currentHas = Object.prototype.hasOwnProperty.call(currentMap, path);
+            var serverHash = serverHas ? serverMap[path] : undefined;
+            var localHash = localHas ? localMap[path] : undefined;
+            var currentHash = currentHas ? currentMap[path] : undefined;
+            var serverChanged = localHas && serverHash !== localHash;
+
+            if (!localHas && serverHas)
+            {
+               if (currentHas && currentHash === serverHash)
+               {
+                  updatedLocal[path] = currentHash;
+                  continue;
+               }
+               this.addConflict(path,
+                     currentHas ? currentHash : null,
+                     serverHash,
+                     undefined,
+                     currentHas ? "manual-upload-untracked-local-vs-remote" :
+                        "manual-upload-untracked-remote");
+               continue;
+            }
+
+            if (serverChanged && currentHash !== serverHash)
+            {
+               this.addConflict(path,
+                     currentHas ? currentHash : null,
+                     serverHas ? serverHash : undefined,
+                     localHash,
+                     currentHas ? "manual-upload-local-vs-remote-change" :
+                        "manual-upload-delete-vs-remote-change");
+               continue;
+            }
+
+            if (currentHas)
+            {
+               if (!serverHas || serverHash !== currentHash)
+                  updatedServer[path] = await this.pushFile(path);
+               else
+                  updatedServer[path] = currentHash;
+               updatedLocal[path] = updatedServer[path];
+               continue;
+            }
+
+            if (localHas && localHash != null)
+            {
+               if (serverHas && serverHash != null)
+                  await this.deleteRemoteFile(path);
+               updatedServer[path] = null;
+               updatedLocal[path] = null;
+               continue;
+            }
+
+            if (serverHas && serverHash == null)
+               updatedLocal[path] = null;
+         }
+
+         await this.putServerManifest(mapToManifest(updatedServer));
+         this.saveLocalManifest(mapToManifest(updatedLocal));
+         this.hasDirtyHint = false;
+         this.setStatus(this.getPendingConflicts().length ? "conflict" : "uploaded");
+      } finally {
+         this.syncing = false;
+      }
+   };
+
+   SaveSync.prototype.deleteLocalFile = function(relPath) {
+      var abs = pathJoin(this.basePath, relPath);
+      this.suppressDirty = true;
+      try {
+         try {
+            this.Module.FS.unlink(abs);
+         } catch (e) {}
+      } finally {
+         this.suppressDirty = false;
+      }
+   };
+
+   SaveSync.prototype.downloadNow = async function() {
+      if (!this.initialized && !this.Module)
+      {
+         console.warn("[SaveSync] download skipped: not initialized", {
+            initialized: this.initialized,
+            hasModule: !!this.Module
+         });
+         return;
+      }
+      if (this.syncing)
+      {
+         console.warn("[SaveSync] download skipped: sync already running");
+         return;
+      }
+
+      if (this.pendingTimer)
+      {
+         clearTimeout(this.pendingTimer);
+         this.pendingTimer = null;
+      }
+
+      this.syncing = true;
+      this.setStatus("downloading", this.gameId);
+      try {
+         var serverMap = manifestToMap(await this.fetchServerManifest());
+         var currentMap = manifestToMap(await this.buildCurrentManifest());
+         var updatedLocal = {};
+         var paths = {};
+         var path;
+
+         console.log("[SaveSync] download cloud state", {
+            userId: this.userId,
+            gameId: this.gameId,
+            remoteEntries: Object.keys(serverMap).length,
+            localEntries: Object.keys(currentMap).length
+         });
+
+         for (path in serverMap) paths[path] = true;
+         for (path in currentMap) paths[path] = true;
+
+         for (path in paths)
+         {
+            var serverHas = Object.prototype.hasOwnProperty.call(serverMap, path);
+            var currentHas = Object.prototype.hasOwnProperty.call(currentMap, path);
+            var serverHash = serverHas ? serverMap[path] : undefined;
+
+            if (serverHas && serverHash != null)
+            {
+               console.log("[SaveSync] applying remote file", {
+                  path: path,
+                  hash: serverHash
+               });
+               await this.applyRemoteFile(path, serverHash);
+               updatedLocal[path] = serverHash;
+               continue;
+            }
+
+            console.log("[SaveSync] deleting local file from cloud state", {
+               path: path,
+               serverHas: serverHas,
+               serverHash: serverHash,
+               currentHas: currentHas
+            });
+            if (currentHas)
+               this.deleteLocalFile(path);
+            if (serverHas)
+               updatedLocal[path] = null;
+         }
+
+         this.conflicts = (this.conflicts || []).map(function(conflict) {
+            if (conflict.status === "pending")
+            {
+               conflict.status = "resolved";
+               conflict.resolution = "use_cloud";
+               conflict.resolvedAt = new Date().toISOString();
+            }
+            return conflict;
+         });
+         this.saveConflicts();
+         this.saveLocalManifest(mapToManifest(updatedLocal));
+         this.hasDirtyHint = false;
+         this.setStatus("downloaded", Object.keys(updatedLocal).length + " entries");
+         console.log("[SaveSync] download complete", {
+            userId: this.userId,
+            gameId: this.gameId,
+            localManifestEntries: Object.keys(updatedLocal).length
+         });
+      } catch (e) {
+         console.warn("[SaveSync] download failed", e);
+         this.setStatus("download failed", e.message || String(e));
+         throw e;
+      } finally {
+         this.syncing = false;
+      }
+   };
+
+   var instance = new SaveSync();
+
+   global.RetroArchSaveSync = {
+      init: function(options) { return instance.init(options); },
+      syncNow: function() { return instance.syncNow(); },
+      uploadNow: function() { return instance.uploadNow(); },
+      downloadNow: function() { return instance.downloadNow(); },
+      markDirty: function(path) {
+         instance.hasDirtyHint = true;
+         instance.scheduleSync();
+      },
+      getPendingConflicts: function() { return instance.getPendingConflicts(); },
+      resolveConflict: function(id, action) { return instance.resolveConflict(id, action); },
+      getState: function() { return instance; }
+   };
+
+   global.addEventListener("online", function() {
+      instance.syncNow().catch(function(e) {
+         instance.setStatus("offline", e.message || String(e));
+      });
+   });
+
+   global.addEventListener("visibilitychange", function() {
+      if (document.visibilityState === "hidden")
+         instance.syncNow().catch(function() {});
+   });
+})(window);
