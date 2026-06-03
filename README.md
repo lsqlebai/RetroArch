@@ -1,345 +1,314 @@
-[![Build Status](https://travis-ci.org/libretro/RetroArch.svg?branch=master)](https://travis-ci.org/libretro/RetroArch)
-[![Coverity Scan Build Status](https://scan.coverity.com/projects/8936/badge.svg)](https://scan.coverity.com/projects/retroarch)
-[![Crowdin](https://badges.crowdin.net/retroarch/localized.svg)](https://crowdin.com/project/retroarch)
-
-# RetroArch
-
-RetroArch is the reference frontend for the libretro API.
-Popular examples of implementations for this API includes video game system emulators and game engines as well as
-more generalized 3D programs.
-These programs are instantiated as dynamic libraries. We refer to these as "libretro cores".
-
-![XMB menu driver](docs/XMB-main-menu.jpg "XMB menu driver")
-
-![rgui menu driver](docs/rgui-main-menu.jpg "rgui menu driver")
-
-![glui menu driver](docs/glui-main-menu.jpg "glui menu driver")
-
-![ozone menu driver](docs/ozone-main-menu.jpg "ozone menu driver")
-
-## libretro
-
-[libretro](https://www.libretro.com) is an API that exposes generic audio/video/input callbacks.
-A frontend for libretro (such as RetroArch) handles video output, audio output, input and application lifecycle.
-A libretro core written in portable C or C++ can run seamlessly on many platforms with very little to no porting effort.
-
-While RetroArch is the reference frontend for libretro, several other projects have used the libretro
-interface to include support for emulators and/or game engines. libretro is completely open and free for anyone to use.
-
-[libretro API header](https://github.com/libretro/RetroArch/blob/master/libretro-common/include/libretro.h)
-
-## Binaries
-
-Latest binaries are currently hosted on the [buildbot](http://buildbot.libretro.com/).
-
-## Support
-
-To reach developers, either make an issue here on GitHub, make a thread on the [forum](https://www.libretro.com/forums/), chat on [discord](https://discord.gg/C4amCeV), or visit our IRC channel: #retroarch @ irc.freenode.org. You could create a post in [Reddit](https://www.reddit.com/r/RetroArch/) with *Technical Support* flair.
-
-## Documentation
-
-See our [Documentation Center](https://docs.libretro.com/). On Unix, man-pages are provided.
-More developer-centric stuff is found [here](https://docs.libretro.com/development/libretro-overview/).
-
-## Related projects
-
-   - Cg/HLSL shaders: [common-shaders](https://github.com/libretro/common-shaders)
-   - slang shaders: [slang-shaders](https://github.com/libretro/slang-shaders)
-   - GLSL shaders: [glsl-shaders](https://github.com/libretro/glsl-shaders)
-   - Helper scripts to build libretro implementations: [libretro-super](https://github.com/libretro/libretro-super)
-   - GitHub mirrors of projects, useful for generating diff files: [libretro-mirrors](https://github.com/libretro-mirrors/)
-
-## Philosophy
-
-RetroArch attempts to be small and lean
-while still having all the useful core features expected from an emulator.
-It is designed to be very portable and features a gamepad-centric and touchscreen UI.
-It also has a full-featured command-line interface.
-
-In some areas, RetroArch goes beyond and emphasizes on not-so-common technical features such as multi-pass shader support,
-real-time rewind (Braid-style), video recording (using FFmpeg), run-ahead input latency removal, etc.
-
-RetroArch also emphasizes being easy to integrate into various launcher frontends.
-
-## Platforms
+# RetroArch DOSBox Pure Web + Cloud Sync
 
-RetroArch has been ported to the following platforms:
-   - Android (2.x to most recent version)
-   - Apple iOS
-   - Apple macOS (PPC, x86-32 and x86-64)
-   - Apple tvOS
-   - Blackberry
-   - DOS
-   - Emscripten (WebAssembly and JavaScript)
-   - FreeBSD
-   - Haiku
-   - LG webOS
-   - Linux
-   - Original Microsoft Xbox
-   - Microsoft Xbox 360 (Libxenon/XeXDK)
-   - Microsoft Xbox One
-   - Microsoft Xbox Series S/X
-   - Miyoo
-   - NetBSD
-   - Nintendo NES/SNES Classic Edition
-   - Nintendo GameCube
-   - Nintendo Wii
-   - Nintendo Switch
-   - Nintendo Wii U
-   - Nintendo 3DS/2DS
-   - OpenBSD
-   - OpenDingux
-   - PlayStation2
-   - PlayStation3
-   - PlayStation4
-   - PlayStation Portable
-   - PlayStation Vita
-   - Raspberry Pi
-   - ReactOS
-   - Redox OS
-   - RetroFW
-   - RS90
-   - SerenityOS
-   - Solaris
-   - Windows NT 3.5
-   - Windows 95
-   - Windows 98
-   - Windows 2000
-   - Windows XP
-   - Windows Millennium
-   - Windows Vista
-   - Windows 7
-   - Windows 8
-   - Windows 10
-   - Windows 11
+本项目基于 [RetroArch](https://www.retroarch.com/) / [libretro](https://www.libretro.com/) 生态进行改造，并集成了 [DOSBox Pure](https://github.com/schellingb/dosbox-pure) core，用于在 Web 和 Android 上运行 DOS 游戏，并支持多端存档同步。
 
-## Dependencies (PC)
+首先感谢 RetroArch、libretro、DOSBox Pure 以及相关开源项目的长期维护。本仓库保留 RetroArch 上游代码结构，我们的工作主要集中在 Web Player、Android 端接入、以及一套轻量级 cloud sync 服务。
 
-There are no true hard dependencies per se.
+## 我们做了什么
 
-On Windows, RetroArch can run with only Win32 as dependency.
+这个版本的核心目标是让 DOSBox Pure 可以在本地 Web 环境中稳定运行，并让 Web / Android 之间共享同一套云端存档。
 
-On Linux, there are no true dependencies. For optimal usage, the
-following dependencies come as recommended:
+主要改动包括：
 
-   - GL headers / Vulkan headers
-   - X11 headers and libs, or EGL/KMS/GBM
+- DOSBox Pure 跑通到 RetroArch Web Player。
+- Web Player 默认使用 `dosbox_pure` core。
+- Web 端增加用户注册、登录、登出。
+- Web 端增加用户菜单，登录后可使用 `Sync Now`、`Upload Local`、`Use Cloud`。
+- 增加轻量级 Node.js sync server，使用 cookie session 做用户鉴权。
+- 云端同步按真实用户隔离，不再使用固定用户。
+- 云端同步按 `gameId` 隔离，静态部署的游戏 zip 会以内容 hash 作为 canonical game id。
+- 同步范围覆盖 RetroArch 的 `saves` 和 `states`。
+- Web 端同步逻辑不直接读 IndexedDB，而是通过 Emscripten/BrowserFS 挂载后的虚拟文件路径扫描和同步。
+- Android 端增加云账号入口、云游戏列表、下载、sync、upload。
+- Android 端使用服务端下发 cookie，并存入 `SharedPreferences` 后随请求带上，尽量复用 Web 的 cookie/session 逻辑。
+- Android 端存档目录迁移到 app-specific external storage，避免现代 Android 下公共 `/storage/emulated/0/RetroArch` 权限不稳定。
+- 手动 sync / upload 后，Web 和 Android 都会展示远端 manifest version / entries，方便排查多端数据是否一致。
 
-OSX port of RetroArch requires latest versions of Xcode to build.
+## 当前能力
 
-RetroArch can utilize these libraries if enabled:
+### Web
 
-   - nvidia-cg-toolkit
-   - libfreetype2 (TTF font rendering on screen)
+Web 产物位于：
 
-RetroArch needs at least one of these audio driver libraries:
+```sh
+pkg/emscripten/libretro
+```
 
-   - ALSA
-   - OSS
-   - RoarAudio
-   - RSound
-   - OpenAL
-   - JACK
-   - SDL
-   - PulseAudio
-   - PipeWire
-   - XAudio2 (Win32, Xbox 360)
-   - DirectSound (Win32, Xbox 1)
-   - CoreAudio (OSX, iOS)
+当前主要入口：
 
-To run properly, RetroArch requires a libretro implementation present; however, as it's typically loaded
-dynamically, it's not required at build time.
+```sh
+http://localhost:8080/
+```
 
-## Dependencies (Console ports, mobile)
+Web 端支持：
 
-Console ports have their own dependencies, but generally do not require
-anything other than what the respective SDKs provide.
+- 用户注册 / 登录 / 登出。
+- 从用户菜单触发同步。
+- 从云端下载存档。
+- 上传本地 `saves` / `states`。
+- 使用部署在 `assets/games` 下的 DOS 游戏 zip。
+- 页面展示同步状态、远端 manifest version 和 entries。
 
-## Requirements
+### Android
 
-### OpenGL1 ###
-Your videocard needs to at least support the OpenGL 1.1 spec.
+Android 产物位于：
 
-***Shaders***: N/A
+```sh
+pkg/android/phoenix/build/outputs/apk/normal/debug/
+```
 
-**Menu driver support**: MaterialUI, XMB, Ozone and RGUI should all work correctly.
-XMB won't have shader pipeline effects because of the aforementioned lack of shader
-support.
+Android 端支持：
 
-### OpenGL2 ###
-Your videocard needs to at least support the OpenGL 2.1 spec.
+- 云账号登录。
+- 下载服务端游戏列表中的 DOS 游戏 zip。
+- 将游戏缓存到 app-specific external storage。
+- 按同一个 `gameId` 同步 `saves` / `states`。
+- 上传本地存档。
+- 覆盖安装后继续保留用户数据和云端登录状态。
 
-***Shaders:*** You can choose between either NVIDIA Cg shaders (deprecated, requires separate runtime
-to be installed on your system), or GLSL shaders.
+Android 存储目录使用：
 
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
+```sh
+/storage/emulated/0/Android/data/com.retroarch/files/
+```
 
-### OpenGL3 ###
-Your videocard needs to at least support the OpenGL 3.2 core feature spec.
+其中：
 
-***Shaders:*** You will be able to use modern Slang shaders with this driver.
+```sh
+saves/
+states/
+downloads/
+cloud-games/
+```
 
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
+## 云端同步模型
 
-### Direct3D 11 ###
-Your videocard needs to at least support the Direct3D11 11.0 spec. The card
-also needs to support at least the Shader Model 4.0.
+不要直接同步 Web IndexedDB。
 
-***Shaders:*** You will be able to use modern Slang shaders with this driver.
+Web 端的 IndexedDB 是 BrowserFS 的 inode/data block 结构，不是 RetroArch 可理解的文件路径。同步逻辑应该始终从 RetroArch 挂载后的虚拟路径出发：
 
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
+```sh
+/home/web_user/retroarch/userdata/saves
+/home/web_user/retroarch/userdata/states
+```
 
-### Vulkan ###
-Your videocard needs to at least support the Vulkan 1.0 spec.
+服务端保存的是 cloud_sync-compatible 结构：
 
-***Shaders:*** You will be able to use modern Slang shaders with this driver.
+```sh
+users/<userId>/retroarch/games/<gameId>/objects/
+```
 
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
+典型对象：
 
-## Configuring
+```sh
+manifest.server
+saves/DOSBox-pure/<game>.pure.zip
+states/DOSBox-pure/<state-file>
+```
 
-The default configuration is defined in `config.def.h`.
-It is not recommended to change this unless you know what you're doing.
-These can later be tweaked by using a config file.
-A sample configuration file is installed to `/etc/retroarch.cfg`. This is the system-wide config file.
+manifest 是一个 JSON 数组：
 
-RetroArch will on startup create a config file in `$XDG\_CONFIG\_HOME/retroarch/retroarch.cfg` if it does not exist.
-Users only need to configure a certain option if the desired value deviates from the value defined in config.def.h.
+```json
+[
+  {
+    "path": "saves/DOSBox-pure/example.pure.zip",
+    "hash": "md5hex"
+  }
+]
+```
 
-To configure joypads, use the built-in menu or manually configure them in `retroarch.cfg`.
+说明：
 
-## Compiling and installing
+- `path` 是 portable path，固定使用 `/`。
+- `hash` 使用 MD5，以便和 RetroArch native cloud sync 模型保持接近。
+- 删除使用 tombstone：`hash: null`。
+- `gameId` 来自部署游戏 zip 的 `sha256:<hash>`，保证 Web / Android 对同一个游戏使用同一个同步 namespace。
 
-Instructions for compiling and installing RetroArch can be found in the [Libretro/RetroArch Documentation Center](https://docs.libretro.com/).
+## API 概览
 
-## CRT 15Khz Resolution Switching
+API base：
 
-CRT SwitchRes will turn on, on the fly. However, you will need to restart RetroArch to disable it. With CRT SwitchRes enable RetroArch will start in 2560 x 480 @ 60.
+```sh
+/api/sync/v1
+```
 
-If you are running Windows, before enabling the CRT SwitchRes options please make sure you have installed CRTEmudriver and installed some modelines. The minimum modelines for all games to switch correctly are:
+主要接口：
 
-- 2560 x 192 @ 60.000000
-- 2560 x 200 @ 60.000000
-- 2560 x 240 @ 60.000000
-- 2560 x 224 @ 60.000000
-- 2560 x 237 @ 60.000000
-- 2560 x 256 @ 50.000000
-- 2560 x 254 @ 55.000000
-- 2560 x 448 @ 60.000000
-- 2560 x 480 @ 60.000000
+```sh
+POST /auth/register
+POST /auth/login
+POST /auth/logout
+GET  /auth/me
 
-Install these modelines replacing 2560 with your desired super resolution. The above resolutions are NTSC only so if you would be playing any PAL content please add PAL modelines:
+GET  /games
 
-- 2560 x 192 @ 50.000000
-- 2560 x 200 @ 50.000000
-- 2560 x 240 @ 50.000000
-- 2560 x 224 @ 50.000000
-- 2560 x 288 @ 50.000000
-- 2560 x 237 @ 50.000000
-- 2560 x 254 @ 55.000000
-- 2560 x 448 @ 50.000000
-- 2560 x 480 @ 50.000000
+GET  /manifest?gameId=<gameId>
+PUT  /manifest?gameId=<gameId>
 
-Some games will require higher PAL resolutions which should also be installed:
+GET    /file?gameId=<gameId>&path=<path>
+PUT    /file?gameId=<gameId>
+DELETE /file?gameId=<gameId>&path=<path>
+```
 
-- 2560 x 512 @ 50.000000
-- 2560 x 576 @ 50.000000
+`/manifest` 响应会带上调试 header：
 
-Ideally install all these modelines and everything will work great.
+```sh
+X-RetroArch-Cloud-Manifest-Version
+X-RetroArch-Cloud-Manifest-Updated-At
+X-RetroArch-Cloud-Manifest-Entries
+```
 
-## Super Resolutions
+这些 header 用于 Web / Android UI 展示远端版本，方便排查多端是否同步到同一份数据。
 
-The default super resolution is 2560. It is displayed just under the CRT switch option, which can be found in video settings. This can be changed within the retroarch.cfg. The only compatible resolutions are 1920, 2560 and 3840. Any other resolutions will be ignored and native switching will be activated.
+## 本地部署
 
-## Native Resolutions
+进入 Emscripten 包目录：
 
-If native resolutions are activated you will need a whole new set of modelines:
+```sh
+cd pkg/emscripten
+docker compose up
+```
 
-- 256 x 240 @ 50.006977 SNESpal
-- 256 x 448 @ 50.006977 SNESpal
-- 512 x 224 @ 50.006977 SNESpal
-- 512 x 240 @ 50.006977 SNESpal
-- 512 x 448 @ 50.006977 SNESpal
-- 256 x 240 @ 60.098812 SNESntsc
-- 256 x 448 @ 60.098812 SNESntsc
-- 512 x 240 @ 60.098812 SNESntsc
-- 512 x 224 @ 60.098812 SNESntsc
-- 512 x 448 @ 60.098812 SNESntsc
-- 256 x 192 @ 59.922745 MDntsc
-- 256 x 224 @ 59.922745 MDntsc
-- 320 x 224 @ 59.922745 MDntsc
-- 320 x 240 @ 59.922745 MDntsc
-- 320 x 448 @ 59.922745 MDntsc
-- 320 x 480 @ 59.922745 MDntsc
-- 256 x 192 @ 49.701458 MDpal
-- 256 x 224 @ 49.701458 MDpal
-- 320 x 224 @ 49.701458 MDpal
-- 320 x 240 @ 49.701458 MDpal
-- 320 x 288 @ 49.701458 MDpal
-- 320 x 448 @ 49.701458 MDpal
-- 320 x 480 @ 49.701458 MDpal
-- 320 x 576 @ 49.701458 MDpal
-- 256 x 288 @ 49.701458 MSYSpal
-- 256 x 240 @ 60.098812 NESntsc
-- 256 x 240 @ 50.006977 NESpal
+服务：
 
-- 640 x 237 @ 60.130001 N64ntsc
-- 640 x 240 @ 60.130001 N64ntsc
-- 640 x 480 @ 60.130001 N64ntsc
-- 640 x 288 @ 50.000000 N64pal
-- 640 x 480 @ 50.000000 N64pal
-- 640 x 576 @ 50.000000 N64pal
+```sh
+http://localhost:8080/
+```
 
-- 256 x 252 @ 49.759998 PSXpal
-- 320 x 252 @ 49.759998 PSXpal
-- 384 x 252 @ 49.759998 PSXpal
-- 640 x 252 @ 49.759998 PSXpal
-- 640 x 540 @ 49.759998 PSXpal
+Docker compose 会启动：
 
-- 384 x 240 @ 59.941002 PSXntsc
-- 256 x 480 @ 59.941002 PSXntsc
+- `libretro-nginx`：静态 Web Player。
+- `libretro-sync`：Node.js sync server。
 
-- 352 x 240 @ 59.820000 Saturn/SGFX_NTSCp
-- 704 x 240 @ 59.820000 SaturnNTSCp
-- 352 x 480 @ 59.820000 SaturnNTSCi
-- 704 x 480 @ 59.820000 SaturnNTSCi
-- 352 x 288 @ 49.701458 SaturnPALp
-- 704 x 288 @ 49.701458 SaturnPALp
-- 352 x 576 @ 49.701458 SaturnPALi
-- 704 x 576 @ 49.701458 SaturnPALi
+数据默认落在：
 
-- 240 x 160 @ 59.730000 GBA
-- 320 x 200 @ 60.000000 Doom
+```sh
+pkg/emscripten/sync-data
+```
 
-// Arcade
+该目录是运行时数据，不应该提交到 git。
 
-- 400 x 254 @ 54.706841 MK
-- 384 x 224 @ 59.637405 CPS1
+## 添加游戏
 
-These modelines are more accurate giving exact hz. However, some games may have unwanted results. This is due to mid-scanline resolution changes on the original hardware. For the best results super resolutions are the way to go.
+将 DOS 游戏 zip 放到：
 
-## CRT resolution switching & MAME
+```sh
+pkg/emscripten/libretro/assets/games/
+```
 
-Some arcade resolutions can be very different from consumer CRTs. There is resolution detection to ensure MAME games will be displayed in the closest available resolution but drawn at their native resolution within this resolution. Meaning that the MAME game will look just like the original hardware.
+然后更新：
 
-MAME ROMs that run in a vertical aspect like DoDonPachi need to be rotated within MAME before resolution switching and aspect correction will work. Do this before enabling CRT SwitchRes so that RetroArch will run in your desktop resolution. Once you have rotated any games that may need it turn CRT SwitchRes on.
+```sh
+pkg/emscripten/libretro/assets/games/.index-xhr
+```
 
-## Socials
+简单示例：
 
-The links below belong to our official channels. Links other than this may have been created by fans, independent members or followers. We seriously recommend using our original resources.
+```json
+{"sgzyjz.zip":null}
+```
 
-- [Website](https://www.retroarch.com/)
-- [Blog](https://libretro.com/)
-- [Facebook](https://www.facebook.com/libretro)
-- [Twitter](https://twitter.com/libretro)
-- [Reddit](https://www.reddit.com/r/RetroArch/)
-- [YouTube](https://www.youtube.com/Libretro)
-- [Google Post](https://posts.google.com/share/55Nhs2jG)
-- [Steam](https://store.steampowered.com/app/1118310/RetroArch/)
-- [YouTube Topic](https://www.youtube.com/channel/UC5q007PYyQPgin0HHbzF0zQ)
-- [Patreon](https://www.patreon.com/libretro)
-- [BOUNTYSOURCE](https://www.bountysource.com/teams/libretro/issues)
-- [Discord](https://discord.com/invite/VZ2b7wghxR)
-- [Teespring](https://teespring.com/stores/retroarch)
-- [Documentation](https://docs.libretro.com/)
-- [Forum](https://forums.libretro.com/)
+服务端 `/games` 会扫描 `assets/games/*.zip`，计算 zip 内容 hash，并返回：
+
+- `gameId`
+- `title`
+- `core`
+- `contentUrl`
+- `contentHash`
+- `contentSize`
+- `updatedAt`
+
+Android 会使用 `contentUrl` 下载游戏，并保存 `gameId` 映射，后续同步使用同一个 `gameId`。
+
+## Web 使用方法
+
+1. 启动 Docker 服务。
+2. 打开 `http://localhost:8080/`。
+3. 通过右上角用户菜单注册或登录。
+4. 如需使用云端游戏，选择 `Use Cloud` 或通过云游戏入口下载对应游戏。
+5. 运行游戏后，DOSBox Pure 会在 RetroArch 的 save/state 目录下写入存档。
+6. 使用用户菜单中的：
+   - `Sync Now`：按三方 diff 同步。
+   - `Upload Local`：上传本地 saves/states。
+   - `Use Cloud`：以云端数据覆盖/恢复本地 saves/states。
+
+## Android 使用方法
+
+1. 安装最新 APK。
+2. 打开 RetroArch Cloud。
+3. 在 Cloud Account 中登录。
+4. 进入 Cloud Games 下载游戏。
+5. 从 `Load Content` 中选择下载到本地的游戏 zip。
+6. 游戏产生 save/state 后，可使用：
+   - `Sync Now`
+   - `Upload Local`
+   - `Use Cloud`
+
+Android 模拟器访问宿主机 Docker 服务时使用：
+
+```sh
+http://10.0.2.2:8080/api/sync/v1
+```
+
+真机需要将服务地址改为手机可访问的局域网或公网地址。
+
+## 重新部署时要注意
+
+如果只改 Web UI 或同步 JS，需要替换：
+
+```sh
+pkg/emscripten/libretro/index.html
+pkg/emscripten/libretro/libretro.css
+pkg/emscripten/libretro/libretro.js
+pkg/emscripten/libretro/save-sync.js
+```
+
+如果改了服务端逻辑，需要替换：
+
+```sh
+pkg/emscripten/sync-server.js
+```
+
+然后重启服务：
+
+```sh
+cd pkg/emscripten
+docker compose restart
+```
+
+如果只替换静态文件，也建议刷新浏览器缓存。当前 `index.html` 会通过 query version 给 `save-sync.js` / `libretro.js` 做缓存刷新。
+
+## 构建 Android APK
+
+```sh
+cd pkg/android/phoenix
+JAVA_HOME=/Library/Java/JavaVirtualMachines/adoptopenjdk-8.jdk/Contents/Home \
+ANDROID_HOME=/Users/bytedance/Library/Android/sdk \
+ANDROID_SDK_ROOT=/Users/bytedance/Library/Android/sdk \
+./gradlew assembleNormalDebug --stacktrace
+```
+
+APK 输出：
+
+```sh
+pkg/android/phoenix/build/outputs/apk/normal/debug/
+```
+
+## 重要限制
+
+- 当前 sync server 是轻量级本地服务，适合个人部署和验证，不是完整生产级账号系统。
+- session 使用 cookie，Android 端通过 `SharedPreferences` 保存 cookie header。
+- Web 当前主目标是 `pkg/emscripten/libretro` 单线程/主 Web Player；`libretro-thread` 暂不作为主要开发目标。
+- `states` 同步链路已支持，但建议每个游戏单独做 restore 验证。
+- 云端游戏 zip 是 canonical content source；不要用本地路径作为跨端同步 identity。
+
+## 致谢
+
+再次感谢：
+
+- [RetroArch](https://www.retroarch.com/)
+- [libretro](https://www.libretro.com/)
+- [DOSBox Pure](https://github.com/schellingb/dosbox-pure)
+- Emscripten、BrowserFS、Docker、nginx 以及相关开源生态
+
+本项目是在这些基础设施之上做的小步扩展：让 DOSBox Pure 更容易在 Web / Android 多端运行，并让 saves/states 可以围绕真实用户同步。
