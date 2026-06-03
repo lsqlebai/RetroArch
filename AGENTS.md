@@ -12,6 +12,7 @@ This repository is a RetroArch tree with a local DOSBox Pure core ported for the
 - `pkg/emscripten/docker-compose.yml`: local nginx deployment for both web output directories.
 - `pkg/emscripten/nginx.conf`: nginx config with cross-origin isolation headers, wasm MIME type, and `/api/sync/` proxying.
 - `pkg/emscripten/sync-server.js`: lightweight local save-sync gateway for the single-thread web player.
+- `pkg/android/Android.md`: Android build, asset packaging, Chinese-locale, emulator, and future native sync notes. Read this before Android work.
 - `dosbox-pure`: local DOSBox Pure libretro core source.
 - `tmp_build/dosbox-pure`: build/source scratch copy. Treat as disposable unless the user says otherwise.
 

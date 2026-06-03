@@ -10190,6 +10190,28 @@ static bool setting_append_list(
 #endif
 
 #ifdef HAVE_CLOUDSYNC
+#ifdef ANDROID
+         CONFIG_ACTION(
+               list, list_info,
+               MENU_ENUM_LABEL_CLOUD_SYNC_ACCOUNT,
+               MENU_ENUM_LABEL_VALUE_CLOUD_SYNC_ACCOUNT,
+               &group_info,
+               &subgroup_info,
+               parent_group);
+         MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
+               CMD_EVENT_CLOUD_SYNC_ACCOUNT);
+
+         CONFIG_ACTION(
+               list, list_info,
+               MENU_ENUM_LABEL_CLOUD_GAMES,
+               MENU_ENUM_LABEL_VALUE_CLOUD_GAMES,
+               &group_info,
+               &subgroup_info,
+               parent_group);
+         MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
+               CMD_EVENT_CLOUD_GAMES);
+#endif
+
          CONFIG_ACTION(
                list, list_info,
                MENU_ENUM_LABEL_CLOUD_SYNC_SYNC_NOW,
@@ -11881,6 +11903,28 @@ static bool setting_append_list(
          (*list)[list_info->index - 1].action_ok    = setting_action_ok_uint;
          (*list)[list_info->index - 1].action_left  = setting_string_action_left_driver;
          (*list)[list_info->index - 1].action_right = setting_string_action_right_driver;
+
+#ifdef ANDROID
+         CONFIG_ACTION(
+               list, list_info,
+               MENU_ENUM_LABEL_CLOUD_SYNC_ACCOUNT,
+               MENU_ENUM_LABEL_VALUE_CLOUD_SYNC_ACCOUNT,
+               &group_info,
+               &subgroup_info,
+               parent_group);
+         MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
+               CMD_EVENT_CLOUD_SYNC_ACCOUNT);
+
+         CONFIG_ACTION(
+               list, list_info,
+               MENU_ENUM_LABEL_CLOUD_GAMES,
+               MENU_ENUM_LABEL_VALUE_CLOUD_GAMES,
+               &group_info,
+               &subgroup_info,
+               parent_group);
+         MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
+               CMD_EVENT_CLOUD_GAMES);
+#endif
 
          CONFIG_STRING(
                list, list_info,

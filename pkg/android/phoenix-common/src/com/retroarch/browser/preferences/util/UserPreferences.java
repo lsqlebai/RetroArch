@@ -1,7 +1,11 @@
 package com.retroarch.browser.preferences.util;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 import android.annotation.TargetApi;
 import android.content.Context;
@@ -20,6 +24,8 @@ public final class UserPreferences
 {
 	// Logging tag.
 	private static final String TAG = "UserPreferences";
+	private static final String CLOUD_SYNC_MIGRATION_KEY = "android_cloud_sync_migration_version";
+	private static final int CLOUD_SYNC_MIGRATION_VERSION = 2;
 
 	// Disallow explicit instantiation.
 	private UserPreferences()
@@ -125,6 +131,7 @@ public final class UserPreferences
 		final String coreDir = dataDir + "/cores/";
 		final String dstPath	= dataDir;
 		final String dstPathSubdir = "assets";
+		final String assetsPath = dstPath + File.separator + dstPathSubdir;
 
 		final SharedPreferences prefs = getPreferences(ctx);
 
@@ -140,18 +147,87 @@ public final class UserPreferences
 			int version      = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0).versionCode;
 			int last_version = config.keyExists("bundle_assets_extract_last_version") ?
 					config.getInt("bundle_assets_extract_last_version") : 0;
-
-			if (version == last_version)
-				return;
+			boolean assetsReady = bundledAssetsReady(assetsPath);
 
 			config.setString("bundle_assets_src_path", ctx.getApplicationInfo().sourceDir);
 			config.setString("bundle_assets_dst_path", dstPath);
 			config.setString("bundle_assets_dst_path_subdir", dstPathSubdir);
 			config.setInt("bundle_assets_extract_version_current", version);
+
+			if (!assetsReady || version != last_version)
+			{
+				if (extractBundledAssets(ctx.getApplicationInfo().sourceDir, assetsPath))
+				{
+					config.setInt("bundle_assets_extract_last_version", version);
+					config.setBoolean("bundle_assets_extract_enable", false);
+				}
+				else
+				{
+					config.setInt("bundle_assets_extract_last_version", 0);
+					config.setBoolean("bundle_assets_extract_enable", true);
+				}
+			}
 		}
 		catch (NameNotFoundException ignored)
 		{
 		}
+
+		int cloudSyncMigrationVersion = config.keyExists(CLOUD_SYNC_MIGRATION_KEY) ?
+				config.getInt(CLOUD_SYNC_MIGRATION_KEY) : 0;
+		String overlayDir = assetsPath + File.separator + "overlays";
+		String defaultOverlay = overlayDir + File.separator + "gamepads"
+				+ File.separator + "neo-retropad" + File.separator + "neo-retropad.cfg";
+		String oskOverlayDir = overlayDir + File.separator + "keyboards";
+		String defaultOskOverlay = oskOverlayDir + File.separator + "US-101"
+				+ File.separator + "US-101.cfg";
+
+		if (cloudSyncMigrationVersion < CLOUD_SYNC_MIGRATION_VERSION)
+		{
+			config.setString("cloud_sync_driver", "retroarch_sync");
+			config.setBoolean("cloud_sync_enable", true);
+			config.setInt("cloud_sync_sync_mode", 1);
+			config.setBoolean("cloud_sync_sync_saves", true);
+			config.setBoolean("cloud_sync_sync_configs", false);
+			config.setBoolean("cloud_sync_sync_thumbs", false);
+			config.setBoolean("cloud_sync_sync_system", false);
+			config.setBoolean("input_overlay_enable", true);
+			config.setString("overlay_directory", overlayDir);
+			config.setString("input_overlay", defaultOverlay);
+			config.setString("osk_overlay_directory", oskOverlayDir);
+			config.setString("input_osk_overlay", defaultOskOverlay);
+			config.setBoolean("input_overlay_hide_in_menu", true);
+			config.setBoolean("input_overlay_hide_when_gamepad_connected", false);
+			config.setInt(CLOUD_SYNC_MIGRATION_KEY, CLOUD_SYNC_MIGRATION_VERSION);
+		}
+		else
+		{
+			if (!config.keyExists("cloud_sync_driver")
+					|| "null".equals(config.getString("cloud_sync_driver")))
+				config.setString("cloud_sync_driver", "retroarch_sync");
+			if (!config.keyExists("cloud_sync_enable"))
+				config.setBoolean("cloud_sync_enable", true);
+			if (!config.keyExists("cloud_sync_sync_mode"))
+				config.setInt("cloud_sync_sync_mode", 1);
+			if (!config.keyExists("cloud_sync_sync_saves"))
+				config.setBoolean("cloud_sync_sync_saves", true);
+			if (!config.keyExists("cloud_sync_sync_configs"))
+				config.setBoolean("cloud_sync_sync_configs", false);
+			if (!config.keyExists("cloud_sync_sync_thumbs"))
+				config.setBoolean("cloud_sync_sync_thumbs", false);
+			if (!config.keyExists("cloud_sync_sync_system"))
+				config.setBoolean("cloud_sync_sync_system", false);
+			if (!config.keyExists("overlay_directory"))
+				config.setString("overlay_directory", overlayDir);
+			if (!config.keyExists("input_overlay"))
+				config.setString("input_overlay", defaultOverlay);
+			if (!config.keyExists("osk_overlay_directory"))
+				config.setString("osk_overlay_directory", oskOverlayDir);
+			if (!config.keyExists("input_osk_overlay"))
+				config.setString("input_osk_overlay", defaultOskOverlay);
+		}
+		config.setString("webdav_url", prefs.getString(CloudAuthManager.PREF_SERVER_URL,
+				CloudAuthManager.getServerUrl(ctx)));
+		config.setString("webdav_username", prefs.getString(CloudAuthManager.PREF_USERNAME, ""));
 
 		// Refactor this entire mess and make this usable for per-core config
 		if (Build.VERSION.SDK_INT >= 17 && prefs.getBoolean("audio_latency_auto", true))
@@ -173,6 +249,94 @@ public final class UserPreferences
 		{
 			Log.e(TAG, "Failed to save config file to: " + path);
 		}
+	}
+
+	private static boolean bundledAssetsReady(String assetsPath)
+	{
+		return new File(assetsPath, "pkg/chinese-fallback-font.ttf").isFile()
+				&& new File(assetsPath, "glui/main_tab_passive.png").isFile()
+				&& new File(assetsPath, "glui/font.ttf").isFile();
+	}
+
+	private static boolean extractBundledAssets(String apkPath, String assetsPath)
+	{
+		File assetsDir = new File(assetsPath);
+		byte[] buffer = new byte[1024 * 64];
+
+		Log.i(TAG, "Extracting bundled assets from: " + apkPath);
+		deleteRecursively(assetsDir);
+
+		if (!assetsDir.mkdirs() && !assetsDir.isDirectory())
+		{
+			Log.e(TAG, "Failed to create assets directory: " + assetsPath);
+			return false;
+		}
+
+		try (ZipInputStream zip = new ZipInputStream(new FileInputStream(apkPath)))
+		{
+			ZipEntry entry;
+
+			while ((entry = zip.getNextEntry()) != null)
+			{
+				String name = entry.getName();
+
+				if (!name.startsWith("assets/"))
+					continue;
+
+				String relative = name.substring("assets/".length());
+				if (relative.length() == 0)
+					continue;
+
+				File output = new File(assetsDir, relative);
+
+				if (entry.isDirectory())
+				{
+					if (!output.mkdirs() && !output.isDirectory())
+						throw new IOException("Failed to create directory: " + output);
+				}
+				else
+				{
+					File parent = output.getParentFile();
+					if (parent != null && !parent.mkdirs() && !parent.isDirectory())
+						throw new IOException("Failed to create directory: " + parent);
+
+					try (FileOutputStream out = new FileOutputStream(output))
+					{
+						int read;
+						while ((read = zip.read(buffer)) != -1)
+							out.write(buffer, 0, read);
+					}
+				}
+
+				zip.closeEntry();
+			}
+		}
+		catch (IOException e)
+		{
+			Log.e(TAG, "Failed to extract bundled assets.", e);
+			return false;
+		}
+
+		boolean ready = bundledAssetsReady(assetsPath);
+		Log.i(TAG, "Bundled assets ready: " + ready);
+		return ready;
+	}
+
+	private static void deleteRecursively(File file)
+	{
+		if (file == null || !file.exists())
+			return;
+
+		if (file.isDirectory())
+		{
+			File[] children = file.listFiles();
+			if (children != null)
+				for (File child : children)
+					deleteRecursively(child);
+		}
+
+		if (!file.delete())
+			Log.w(TAG, "Failed to delete: " + file);
 	}
 
 	private static void readbackString(ConfigFile cfg, SharedPreferences.Editor edit, String key)

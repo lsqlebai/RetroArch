@@ -1391,6 +1391,22 @@ MSG_HASH(
    "Which cloud storage network protocol to use."
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CLOUD_SYNC_ACCOUNT,
+   "Cloud Account"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CLOUD_SYNC_ACCOUNT,
+   "Login, register, or logout for the cloud sync service."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CLOUD_GAMES,
+   "Cloud Games"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CLOUD_GAMES,
+   "Download and launch games published by the cloud sync service."
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_CLOUD_SYNC_URL,
    "Cloud Storage URL"
    )

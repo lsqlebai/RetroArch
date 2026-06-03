@@ -49,6 +49,9 @@ typedef struct
 cloud_sync_driver_state_t *cloud_sync_state_get_ptr(void);
 
 extern cloud_sync_driver_t cloud_sync_webdav;
+#ifdef ANDROID
+extern cloud_sync_driver_t cloud_sync_retroarch_sync;
+#endif
 #ifdef HAVE_ICLOUD
 extern cloud_sync_driver_t cloud_sync_icloud;
 #endif

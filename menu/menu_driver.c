@@ -3750,16 +3750,18 @@ static void bundle_decompressed(retro_task_t *task,
    if (dec)
    {
       if (!err)
+      {
          command_event(CMD_EVENT_REINIT, NULL);
+
+         configuration_set_uint(settings,
+               settings->uints.bundle_assets_extract_last_version,
+               settings->uints.bundle_assets_extract_version_current);
+      }
 
       /* delete bundle? */
       free(dec->source_file);
       free(dec);
    }
-
-   configuration_set_uint(settings,
-         settings->uints.bundle_assets_extract_last_version,
-         settings->uints.bundle_assets_extract_version_current);
 
    configuration_set_bool(settings, settings->bools.bundle_finished, true);
 

@@ -169,6 +169,13 @@ struct android_app
    jmethodID getUserLanguageString;
    jmethodID doVibrate;
    jmethodID doHapticFeedback;
+   jmethodID showCloudSyncAccountDialog;
+   jmethodID showCloudGamesDialog;
+   jmethodID getCloudSyncServerUrl;
+   jmethodID getCloudSyncCookieHeader;
+   jmethodID getCloudSyncGameId;
+   jmethodID getCloudSyncGameIdForContent;
+   jmethodID getCloudSyncUsername;
 
    jmethodID isPlayStoreBuild;
    jmethodID getAvailableCores;
@@ -374,6 +381,14 @@ extern JNIEnv *jni_thread_getenv(void);
 void android_app_write_cmd(struct android_app *android_app, int8_t cmd);
 
 extern struct android_app *g_android;
+
+void android_show_cloud_sync_account_dialog(void);
+void android_show_cloud_games_dialog(void);
+char *android_get_cloud_sync_server_url(void);
+char *android_get_cloud_sync_cookie_header(void);
+char *android_get_cloud_sync_game_id(void);
+char *android_get_cloud_sync_game_id_for_content(const char *content_path);
+char *android_get_cloud_sync_username(void);
 
 bool is_screen_reader_enabled(void);
 

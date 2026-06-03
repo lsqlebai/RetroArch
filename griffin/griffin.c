@@ -1715,6 +1715,9 @@ CLOUD SYNC
 #include "../tasks/task_cloudsync.c"
 #include "../network/cloud_sync_driver.c"
 #include "../network/cloud_sync/webdav.c"
+#ifdef ANDROID
+#include "../network/cloud_sync/retroarch_sync.c"
+#endif
 #endif
 
 /*============================================================

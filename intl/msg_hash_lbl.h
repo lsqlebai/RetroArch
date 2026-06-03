@@ -3727,6 +3727,14 @@ MSG_HASH(
    "cloud_sync_driver"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_CLOUD_SYNC_ACCOUNT,
+   "cloud_sync_account"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_CLOUD_GAMES,
+   "cloud_games"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_CLOUD_SYNC_URL,
    "cloud_sync_url"
    )

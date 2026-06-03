@@ -45,7 +45,7 @@ android {
 
   productFlavors {
     normal {
-      resValue "string", "app_name", "RetroArch"
+      resValue "string", "app_name", "RetroArch Cloud"
       buildConfigField "boolean", "PLAY_STORE_BUILD", "false"
 
       dimension "variant"
@@ -149,6 +149,13 @@ android {
       release {
         signingConfig signingConfigs.debug
       }
+    }
+  }
+
+  applicationVariants.all { variant ->
+    variant.outputs.all { output ->
+      def safeVersionName = variant.versionName.replaceAll(/[^A-Za-z0-9._-]/, "_")
+      outputFileName = "RetroArch-${variant.flavorName}-${variant.buildType.name}-${safeVersionName}-${variant.versionCode}.apk"
     }
   }
 }

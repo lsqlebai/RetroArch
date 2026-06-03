@@ -628,6 +628,144 @@ void android_show_saf_tree_picker(void)
 }
 #endif
 
+static char *android_get_string_from_activity(jmethodID method)
+{
+   JNIEnv *env;
+   jstring jstr;
+   const char *chars;
+   char *result = NULL;
+
+   if (!g_android || !method)
+      return NULL;
+
+   env = jni_thread_getenv();
+   if (!env)
+      return NULL;
+
+   CALL_OBJ_METHOD(env, jstr, g_android->activity->clazz, method);
+   if (!jstr)
+      return NULL;
+
+   chars = (*env)->GetStringUTFChars(env, jstr, NULL);
+   if ((*env)->ExceptionOccurred(env))
+   {
+      (*env)->ExceptionDescribe(env);
+      (*env)->ExceptionClear(env);
+      (*env)->DeleteLocalRef(env, jstr);
+      return NULL;
+   }
+
+   if (chars)
+   {
+      result = strdup(chars);
+      (*env)->ReleaseStringUTFChars(env, jstr, chars);
+   }
+
+   (*env)->DeleteLocalRef(env, jstr);
+   return result;
+}
+
+void android_show_cloud_sync_account_dialog(void)
+{
+   JNIEnv *env;
+
+   if (!g_android || !g_android->showCloudSyncAccountDialog)
+      return;
+
+   env = jni_thread_getenv();
+   if (!env)
+      return;
+
+   CALL_VOID_METHOD(env, g_android->activity->clazz,
+         g_android->showCloudSyncAccountDialog);
+}
+
+void android_show_cloud_games_dialog(void)
+{
+   JNIEnv *env;
+
+   if (!g_android || !g_android->showCloudGamesDialog)
+      return;
+
+   env = jni_thread_getenv();
+   if (!env)
+      return;
+
+   CALL_VOID_METHOD(env, g_android->activity->clazz,
+         g_android->showCloudGamesDialog);
+}
+
+char *android_get_cloud_sync_server_url(void)
+{
+   return android_get_string_from_activity(g_android
+         ? g_android->getCloudSyncServerUrl : NULL);
+}
+
+char *android_get_cloud_sync_cookie_header(void)
+{
+   return android_get_string_from_activity(g_android
+         ? g_android->getCloudSyncCookieHeader : NULL);
+}
+
+char *android_get_cloud_sync_game_id(void)
+{
+   return android_get_string_from_activity(g_android
+         ? g_android->getCloudSyncGameId : NULL);
+}
+
+char *android_get_cloud_sync_game_id_for_content(const char *content_path)
+{
+   JNIEnv *env;
+   jstring jcontent_path;
+   jstring jstr;
+   const char *chars;
+   char *result = NULL;
+
+   if (!g_android || !g_android->getCloudSyncGameIdForContent
+         || string_is_empty(content_path))
+      return NULL;
+
+   env = jni_thread_getenv();
+   if (!env)
+      return NULL;
+
+   jcontent_path = (*env)->NewStringUTF(env, content_path);
+   if (!jcontent_path)
+      return NULL;
+
+   CALL_OBJ_METHOD_PARAM(env, jstr, g_android->activity->clazz,
+         g_android->getCloudSyncGameIdForContent, jcontent_path);
+
+   (*env)->DeleteLocalRef(env, jcontent_path);
+
+   if (!jstr)
+      return NULL;
+
+   chars = (*env)->GetStringUTFChars(env, jstr, NULL);
+   if ((*env)->ExceptionOccurred(env))
+   {
+      (*env)->ExceptionDescribe(env);
+      (*env)->ExceptionClear(env);
+      (*env)->DeleteLocalRef(env, jstr);
+      return NULL;
+   }
+
+   if (chars)
+   {
+      result = strdup(chars);
+      (*env)->ReleaseStringUTFChars(env, jstr, chars);
+   }
+
+   (*env)->DeleteLocalRef(env, jstr);
+   return result;
+}
+
+char *android_get_cloud_sync_username(void)
+{
+   return android_get_string_from_activity(g_android
+         ? g_android->getCloudSyncUsername : NULL);
+}
+
 /*
  * Class:     com_retroarch_browser_retroactivity_RetroActivityCommon
  * Method:    safTreeAdded
@@ -2169,6 +2307,20 @@ static void frontend_unix_init(void *data)
          "doVibrate", "(IIII)V");
    GET_METHOD_ID(env, android_app->doHapticFeedback, class,
          "doHapticFeedback", "(I)V");
+   GET_METHOD_ID(env, android_app->showCloudSyncAccountDialog, class,
+         "showCloudSyncAccountDialog", "()V");
+   GET_METHOD_ID(env, android_app->showCloudGamesDialog, class,
+         "showCloudGamesDialog", "()V");
+   GET_METHOD_ID(env, android_app->getCloudSyncServerUrl, class,
+         "getCloudSyncServerUrl", "()Ljava/lang/String;");
+   GET_METHOD_ID(env, android_app->getCloudSyncCookieHeader, class,
+         "getCloudSyncCookieHeader", "()Ljava/lang/String;");
+   GET_METHOD_ID(env, android_app->getCloudSyncGameId, class,
+         "getCloudSyncGameId", "()Ljava/lang/String;");
+   GET_METHOD_ID(env, android_app->getCloudSyncGameIdForContent, class,
+         "getCloudSyncGameIdForContent", "(Ljava/lang/String;)Ljava/lang/String;");
+   GET_METHOD_ID(env, android_app->getCloudSyncUsername, class,
+         "getCloudSyncUsername", "()Ljava/lang/String;");
    GET_METHOD_ID(env, android_app->getUserLanguageString, class,
          "getUserLanguageString", "()Ljava/lang/String;");
    GET_METHOD_ID(env, android_app->isPlayStoreBuild, class,

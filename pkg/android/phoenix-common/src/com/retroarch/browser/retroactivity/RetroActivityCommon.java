@@ -1,13 +1,17 @@
 package com.retroarch.browser.retroactivity;
 
 import com.retroarch.BuildConfig;
+import com.retroarch.browser.preferences.util.CloudAuthManager;
+import com.retroarch.browser.preferences.util.CloudGameManager;
 import com.retroarch.browser.preferences.util.UserPreferences;
 import com.retroarch.playcore.PlayCoreManager;
 
 import android.annotation.TargetApi;
 import android.app.NativeActivity;
+import android.app.AlertDialog;
 import android.content.res.Configuration;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -30,6 +34,12 @@ import android.os.PowerManager;
 import android.os.Vibrator;
 import android.os.VibrationEffect;
 import android.util.Log;
+import android.text.InputType;
+import android.view.View;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
 
 
 import java.io.File;
@@ -162,6 +172,259 @@ public class RetroActivityCommon extends NativeActivity
   public void onRetroArchExit()
   {
       finish();
+  }
+
+  public String getCloudSyncServerUrl()
+  {
+    return CloudAuthManager.getServerUrl(this);
+  }
+
+  public String getCloudSyncCookieHeader()
+  {
+    return CloudAuthManager.getCookieHeader(this);
+  }
+
+  public String getCloudSyncGameId()
+  {
+    return CloudAuthManager.getGameId(this);
+  }
+
+  public String getCloudSyncGameIdForContent(String contentPath)
+  {
+    return CloudAuthManager.getGameIdForContent(this, contentPath);
+  }
+
+  public String getCloudSyncUsername()
+  {
+    return CloudAuthManager.getUsername(this);
+  }
+
+  public void showCloudSyncAccountDialog()
+  {
+    runOnUiThread(new Runnable() {
+      @Override
+      public void run() {
+        showCloudSyncAccountDialogOnUiThread();
+      }
+    });
+  }
+
+  public void showCloudGamesDialog()
+  {
+    runOnUiThread(new Runnable() {
+      @Override
+      public void run() {
+        Toast.makeText(RetroActivityCommon.this, "Loading cloud games...", Toast.LENGTH_SHORT).show();
+      }
+    });
+
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          final List<CloudGameManager.CloudGame> games =
+                CloudGameManager.fetchGames(RetroActivityCommon.this);
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              showCloudGamesDialogOnUiThread(games);
+            }
+          });
+        } catch (final Exception e) {
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              Toast.makeText(RetroActivityCommon.this,
+                    "Cloud games failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+          });
+        }
+      }
+    }).start();
+  }
+
+  private void showCloudGamesDialogOnUiThread(final List<CloudGameManager.CloudGame> games)
+  {
+    if (games == null || games.isEmpty())
+    {
+      Toast.makeText(this, "No cloud games found.", Toast.LENGTH_LONG).show();
+      return;
+    }
+
+    final String[] labels = new String[games.size()];
+    for (int i = 0; i < games.size(); i++)
+      labels[i] = games.get(i).toString();
+
+    new AlertDialog.Builder(this)
+          .setTitle("Cloud Games")
+          .setItems(labels, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+              downloadCloudGame(games.get(which));
+            }
+          })
+          .setNegativeButton("Close", null)
+          .show();
+  }
+
+  private void downloadCloudGame(final CloudGameManager.CloudGame game)
+  {
+    Toast.makeText(this, "Downloading " + game + "...", Toast.LENGTH_SHORT).show();
+
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          final File file = CloudGameManager.downloadGame(RetroActivityCommon.this, game);
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              Toast.makeText(RetroActivityCommon.this,
+                    "Downloaded to " + file.getAbsolutePath()
+                    + ". Open it from Load Content.", Toast.LENGTH_LONG).show();
+            }
+          });
+        } catch (final Exception e) {
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              Toast.makeText(RetroActivityCommon.this,
+                    "Download failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+          });
+        }
+      }
+    }).start();
+  }
+
+  private void showCloudSyncAccountDialogOnUiThread()
+  {
+    final LinearLayout layout = new LinearLayout(this);
+    layout.setOrientation(LinearLayout.VERTICAL);
+    int padding = (int)(20 * getResources().getDisplayMetrics().density);
+    layout.setPadding(padding, padding / 2, padding, 0);
+
+    final TextView status = new TextView(this);
+    status.setText(CloudAuthManager.isLoggedIn(this)
+          ? "Logged in as " + CloudAuthManager.getUsername(this)
+          : "Not logged in");
+
+    final EditText serverUrl = new EditText(this);
+    serverUrl.setSingleLine(true);
+    serverUrl.setHint("Server URL");
+    serverUrl.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+    serverUrl.setText(CloudAuthManager.getServerUrl(this));
+
+    final EditText username = new EditText(this);
+    username.setSingleLine(true);
+    username.setHint("Username");
+    username.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL);
+    username.setText(CloudAuthManager.getUsername(this));
+
+    final EditText password = new EditText(this);
+    password.setSingleLine(true);
+    password.setHint("Password");
+    password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+    layout.addView(status);
+    layout.addView(serverUrl);
+    layout.addView(username);
+    layout.addView(password);
+
+    final boolean loggedIn = CloudAuthManager.isLoggedIn(this);
+    final AlertDialog dialog = new AlertDialog.Builder(this)
+          .setTitle("Cloud Account")
+          .setView(layout)
+          .setNegativeButton("Close", null)
+          .setNeutralButton(loggedIn ? "Logout" : "Register", null)
+          .setPositiveButton("Login", null)
+          .create();
+
+    dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+      @Override
+      public void onShow(DialogInterface dialogInterface) {
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+          @Override
+          public void onClick(View v) {
+            runCloudAuthAction(dialog, serverUrl.getText().toString(),
+                  username.getText().toString(), password.getText().toString(), false);
+          }
+        });
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(new View.OnClickListener() {
+          @Override
+          public void onClick(View v) {
+            if (loggedIn)
+              runCloudLogoutAction(dialog);
+            else
+              runCloudAuthAction(dialog, serverUrl.getText().toString(),
+                    username.getText().toString(), password.getText().toString(), true);
+          }
+        });
+      }
+    });
+
+    dialog.show();
+  }
+
+  private void runCloudAuthAction(final AlertDialog dialog, final String serverUrl,
+        final String username, final String password, final boolean register)
+  {
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          final CloudAuthManager.AuthResult result = register
+                ? CloudAuthManager.register(RetroActivityCommon.this, serverUrl, username, password)
+                : CloudAuthManager.login(RetroActivityCommon.this, serverUrl, username, password);
+
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              Toast.makeText(RetroActivityCommon.this,
+                    result.success ? "Cloud account ready." : "Cloud account failed: " + result.message,
+                    Toast.LENGTH_LONG).show();
+              if (result.success)
+                dialog.dismiss();
+            }
+          });
+        } catch (final Exception e) {
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              Toast.makeText(RetroActivityCommon.this,
+                    "Cloud account failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+          });
+        }
+      }
+    }).start();
+  }
+
+  private void runCloudLogoutAction(final AlertDialog dialog)
+  {
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          CloudAuthManager.logout(RetroActivityCommon.this);
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              Toast.makeText(RetroActivityCommon.this, "Logged out.", Toast.LENGTH_SHORT).show();
+              dialog.dismiss();
+            }
+          });
+        } catch (final Exception e) {
+          runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+              Toast.makeText(RetroActivityCommon.this,
+                    "Logout failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+          });
+        }
+      }
+    }).start();
   }
 
   public int getVolumeCount()

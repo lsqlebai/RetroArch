@@ -152,6 +152,12 @@ enum event_command
 #ifdef HAVE_CLOUDSYNC
    /* Trigger cloud sync */
    CMD_EVENT_CLOUD_SYNC,
+#ifdef ANDROID
+   /* Open Android cloud account dialog */
+   CMD_EVENT_CLOUD_SYNC_ACCOUNT,
+   /* Open Android cloud games dialog */
+   CMD_EVENT_CLOUD_GAMES,
+#endif
 #endif
    /* Shutdown the OS */
    CMD_EVENT_SHUTDOWN,

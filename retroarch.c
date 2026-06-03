@@ -202,6 +202,11 @@
 #include "tasks/task_content.h"
 #include "tasks/tasks_internal.h"
 
+#if defined(ANDROID) && defined(HAVE_CLOUDSYNC)
+void android_show_cloud_sync_account_dialog(void);
+void android_show_cloud_games_dialog(void);
+#endif
+
 #include "version.h"
 #include "version_git.h"
 
@@ -4638,6 +4643,14 @@ bool command_event(enum event_command cmd, void *data)
       case CMD_EVENT_CLOUD_SYNC:
          task_push_cloud_sync();
          break;
+#ifdef ANDROID
+      case CMD_EVENT_CLOUD_SYNC_ACCOUNT:
+         android_show_cloud_sync_account_dialog();
+         break;
+      case CMD_EVENT_CLOUD_GAMES:
+         android_show_cloud_games_dialog();
+         break;
+#endif
 #endif
       case CMD_EVENT_MENU_RESET_TO_DEFAULT_CONFIG:
          config_set_defaults(global_get_ptr());

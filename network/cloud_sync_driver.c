@@ -28,6 +28,9 @@ static cloud_sync_driver_t cloud_sync_null = {
 
 const cloud_sync_driver_t *cloud_sync_drivers[] = {
    &cloud_sync_webdav,
+#ifdef ANDROID
+   &cloud_sync_retroarch_sync,
+#endif
 #ifdef HAVE_ICLOUD
    &cloud_sync_icloud,
 #endif
