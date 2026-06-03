@@ -93,6 +93,20 @@ function hashContent(buffer) {
   return `sha256:${crypto.createHash("sha256").update(buffer).digest("hex")}`;
 }
 
+function manifestVersion(manifest) {
+  return `sha256:${crypto.createHash("sha256")
+    .update(JSON.stringify(normalizeManifest(manifest)))
+    .digest("hex")}`;
+}
+
+function manifestHeaders(meta) {
+  return {
+    "X-RetroArch-Cloud-Manifest-Version": meta.version,
+    "X-RetroArch-Cloud-Manifest-Updated-At": meta.updatedAt || "",
+    "X-RetroArch-Cloud-Manifest-Entries": String(meta.entries)
+  };
+}
+
 function normalizeManifest(value) {
   if (!Array.isArray(value))
     throw new Error("manifest must be an array");
@@ -283,6 +297,25 @@ async function readManifest(userId, gameId) {
   }
 }
 
+async function readManifestMeta(userId, gameId) {
+  const manifest = await readManifest(userId, gameId);
+  let updatedAt = null;
+  try {
+    updatedAt = (await fs.stat(objectPath(userId, gameId, MANIFEST_FILE))).mtime.toISOString();
+  } catch (e) {
+    if (e.code !== "ENOENT")
+      throw e;
+  }
+  return {
+    userId,
+    gameId,
+    version: manifestVersion(manifest),
+    updatedAt,
+    entries: manifest.length,
+    files: manifest
+  };
+}
+
 async function writeManifest(userId, gameId, manifest) {
   manifest = normalizeManifest(manifest);
   const file = objectPath(userId, gameId, MANIFEST_FILE);
@@ -297,9 +330,17 @@ async function handleManifest(req, res, url) {
   const userId = (await requireUser(req, url)).id;
   const gameId = sanitizeGameId(url.searchParams.get("gameId"));
   if (req.method === "GET")
-    return sendJson(res, 200, await readManifest(userId, gameId));
+  {
+    const manifest = await readManifest(userId, gameId);
+    const meta = await readManifestMeta(userId, gameId);
+    return sendJson(res, 200, manifest, manifestHeaders(meta));
+  }
   if (req.method === "PUT")
-    return sendJson(res, 200, await writeManifest(userId, gameId, await readBody(req)));
+  {
+    const manifest = await writeManifest(userId, gameId, await readBody(req));
+    const meta = await readManifestMeta(userId, gameId);
+    return sendJson(res, 200, manifest, manifestHeaders(meta));
+  }
   sendJson(res, 405, {error: "method not allowed"});
 }
 

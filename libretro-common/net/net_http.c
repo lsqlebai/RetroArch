@@ -1550,7 +1550,7 @@ int net_http_status(struct http_t *state)
  **/
 struct string_list *net_http_headers(struct http_t *state)
 {
-   if (!state || !state->err)
+   if (!state || state->err || state->response.status < 200 || state->response.status > 299)
       return NULL;
    return state->response.headers;
 }

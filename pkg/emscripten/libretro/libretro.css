@@ -189,6 +189,19 @@ textarea {
   padding-bottom: 0;
 }
 
+#syncStatus {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+  color: #fff;
+  font-family: monospace;
+  font-size: 12px;
+  max-width: 260px;
+  overflow: hidden;
+  padding-left: 10px;
+  padding-right: 10px;
+  text-overflow: ellipsis;
+}
+
 .webplayer-toolbar .dropdown-menu {
   white-space: normal;
 }
@@ -202,7 +215,7 @@ textarea {
 
 .webplayer-user-menu .dropdown-menu {
   left: auto;
-  min-width: 190px;
+  min-width: 250px;
   right: 0;
   white-space: nowrap;
 }
@@ -210,6 +223,43 @@ textarea {
 .webplayer-user-menu .dropdown-item.disabled {
   opacity: 0.55;
   pointer-events: none;
+}
+
+#menuSyncVersion {
+  color: rgba(255, 255, 255, 0.78);
+  font-family: monospace;
+  font-size: 12px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sync-notice {
+  background: rgba(35, 43, 52, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  display: none;
+  font-size: 14px;
+  left: 50%;
+  line-height: 1.35;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  position: fixed;
+  text-align: center;
+  top: 58px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 1200;
+}
+
+.sync-notice.show {
+  display: block;
+}
+
+.sync-notice.error {
+  background: rgba(150, 38, 38, 0.96);
 }
 
 .webplayer-auth-modal .modal-dialog {

@@ -679,7 +679,13 @@ $(function() {
    $('#menuSyncNow').click(function(e) {
       e.preventDefault();
       if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
+      {
+         var syncStatus = document.getElementById("syncStatus");
+         if (syncStatus)
+            syncStatus.textContent = "sync unavailable";
          return;
+      }
+      window.RetroArchSaveSync.setStatus("sync requested", currentGame ? currentGame.gameId : "current game");
       $('#icnMenuSync').addClass('fa-spin');
       window.RetroArchSaveSync.syncNow().catch(function(e) {
          console.warn("WEBPLAYER: manual save sync failed", e);
@@ -692,7 +698,13 @@ $(function() {
    $('#menuUploadSync').click(function(e) {
       e.preventDefault();
       if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
+      {
+         var uploadStatus = document.getElementById("syncStatus");
+         if (uploadStatus)
+            uploadStatus.textContent = "upload unavailable";
          return;
+      }
+      window.RetroArchSaveSync.setStatus("upload requested", currentGame ? currentGame.gameId : "current game");
       $('#icnMenuUploadSync').addClass('fa-spin');
       window.RetroArchSaveSync.uploadNow().catch(function(e) {
          console.warn("WEBPLAYER: manual save upload failed", e);
@@ -710,6 +722,9 @@ $(function() {
       if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
       {
          console.warn("WEBPLAYER: Use Cloud ignored because save sync is not available");
+         var downloadStatus = document.getElementById("syncStatus");
+         if (downloadStatus)
+            downloadStatus.textContent = "download unavailable";
          return;
       }
       if (!confirm("Replace local saves and states with cloud data for this game?"))
@@ -717,6 +732,7 @@ $(function() {
          console.log("WEBPLAYER: Use Cloud canceled by user");
          return;
       }
+      window.RetroArchSaveSync.setStatus("download requested", currentGame ? currentGame.gameId : "current game");
       $('#icnMenuDownloadSync').addClass('fa-spin');
       window.RetroArchSaveSync.downloadNow().catch(function(e) {
          console.warn("WEBPLAYER: manual cloud restore failed", e);

@@ -25,7 +25,7 @@ public final class UserPreferences
 	// Logging tag.
 	private static final String TAG = "UserPreferences";
 	private static final String CLOUD_SYNC_MIGRATION_KEY = "android_cloud_sync_migration_version";
-	private static final int CLOUD_SYNC_MIGRATION_VERSION = 2;
+	private static final int CLOUD_SYNC_MIGRATION_VERSION = 3;
 
 	// Disallow explicit instantiation.
 	private UserPreferences()
@@ -172,8 +172,19 @@ public final class UserPreferences
 		{
 		}
 
-		int cloudSyncMigrationVersion = config.keyExists(CLOUD_SYNC_MIGRATION_KEY) ?
-				config.getInt(CLOUD_SYNC_MIGRATION_KEY) : 0;
+			File appExternalDir = ctx.getExternalFilesDir(null);
+			String cloudBaseDir = appExternalDir != null
+					? appExternalDir.getAbsolutePath()
+					: ctx.getFilesDir().getAbsolutePath();
+			String cloudSaveDir = cloudBaseDir + File.separator + "saves";
+			String cloudStateDir = cloudBaseDir + File.separator + "states";
+			String cloudDownloadDir = cloudBaseDir + File.separator + "downloads";
+			new File(cloudSaveDir).mkdirs();
+			new File(cloudStateDir).mkdirs();
+			new File(cloudDownloadDir).mkdirs();
+
+			int cloudSyncMigrationVersion = config.keyExists(CLOUD_SYNC_MIGRATION_KEY) ?
+					config.getInt(CLOUD_SYNC_MIGRATION_KEY) : 0;
 		String overlayDir = assetsPath + File.separator + "overlays";
 		String defaultOverlay = overlayDir + File.separator + "gamepads"
 				+ File.separator + "neo-retropad" + File.separator + "neo-retropad.cfg";
@@ -188,10 +199,13 @@ public final class UserPreferences
 			config.setInt("cloud_sync_sync_mode", 1);
 			config.setBoolean("cloud_sync_sync_saves", true);
 			config.setBoolean("cloud_sync_sync_configs", false);
-			config.setBoolean("cloud_sync_sync_thumbs", false);
-			config.setBoolean("cloud_sync_sync_system", false);
-			config.setBoolean("input_overlay_enable", true);
-			config.setString("overlay_directory", overlayDir);
+				config.setBoolean("cloud_sync_sync_thumbs", false);
+				config.setBoolean("cloud_sync_sync_system", false);
+				config.setString("savefile_directory", cloudSaveDir);
+				config.setString("savestate_directory", cloudStateDir);
+				config.setString("core_assets_directory", cloudDownloadDir);
+				config.setBoolean("input_overlay_enable", true);
+				config.setString("overlay_directory", overlayDir);
 			config.setString("input_overlay", defaultOverlay);
 			config.setString("osk_overlay_directory", oskOverlayDir);
 			config.setString("input_osk_overlay", defaultOskOverlay);
@@ -214,9 +228,15 @@ public final class UserPreferences
 				config.setBoolean("cloud_sync_sync_configs", false);
 			if (!config.keyExists("cloud_sync_sync_thumbs"))
 				config.setBoolean("cloud_sync_sync_thumbs", false);
-			if (!config.keyExists("cloud_sync_sync_system"))
-				config.setBoolean("cloud_sync_sync_system", false);
-			if (!config.keyExists("overlay_directory"))
+				if (!config.keyExists("cloud_sync_sync_system"))
+					config.setBoolean("cloud_sync_sync_system", false);
+				if (!config.keyExists("savefile_directory"))
+					config.setString("savefile_directory", cloudSaveDir);
+				if (!config.keyExists("savestate_directory"))
+					config.setString("savestate_directory", cloudStateDir);
+				if (!config.keyExists("core_assets_directory"))
+					config.setString("core_assets_directory", cloudDownloadDir);
+				if (!config.keyExists("overlay_directory"))
 				config.setString("overlay_directory", overlayDir);
 			if (!config.keyExists("input_overlay"))
 				config.setString("input_overlay", defaultOverlay);

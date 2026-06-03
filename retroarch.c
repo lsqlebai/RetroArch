@@ -205,6 +205,7 @@
 #if defined(ANDROID) && defined(HAVE_CLOUDSYNC)
 void android_show_cloud_sync_account_dialog(void);
 void android_show_cloud_games_dialog(void);
+void retroarch_sync_upload_local_saves(void);
 #endif
 
 #include "version.h"
@@ -4649,6 +4650,9 @@ bool command_event(enum event_command cmd, void *data)
          break;
       case CMD_EVENT_CLOUD_GAMES:
          android_show_cloud_games_dialog();
+         break;
+      case CMD_EVENT_CLOUD_UPLOAD:
+         retroarch_sync_upload_local_saves();
          break;
 #endif
 #endif

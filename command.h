@@ -157,6 +157,8 @@ enum event_command
    CMD_EVENT_CLOUD_SYNC_ACCOUNT,
    /* Open Android cloud games dialog */
    CMD_EVENT_CLOUD_GAMES,
+   /* Upload local Android saves/states */
+   CMD_EVENT_CLOUD_UPLOAD,
 #endif
 #endif
    /* Shutdown the OS */

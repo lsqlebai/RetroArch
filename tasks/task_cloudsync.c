@@ -28,6 +28,7 @@
 #include "../file_path_special.h"
 #include "../network/cloud_sync_driver.h"
 #include "../paths.h"
+#include "../runloop.h"
 #include "../tasks/tasks_internal.h"
 #include "../verbosity.h"
 
@@ -647,6 +648,8 @@ static void task_cloud_sync_fetch_server_file(task_cloud_sync_state_t *sync_stat
             key, CS_FILE_HASH(server_file), true);
       return;
    }
+   RARCH_LOG(CSPFX "Resolved \"%s\" to local file \"%s\".\n",
+         key, filename);
 
    if (!settings->bools.cloud_sync_destructive && path_is_valid(filename))
    {
@@ -1231,6 +1234,13 @@ static void task_cloud_sync_end_handler(void *user_data, const char *path, bool 
          (end_time - sync_state->start_time) / 1000 / 1000,
          (end_time - sync_state->start_time) % (1000 * 1000),
          sync_state->uploads, sync_state->downloads);
+
+   if (sync_state->downloads && !path_is_empty(RARCH_PATH_CONTENT))
+   {
+      const char *msg = "Cloud saves downloaded. Reload content to use them.";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 360, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+   }
 
    task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
 }

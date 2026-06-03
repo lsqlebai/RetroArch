@@ -10210,6 +10210,16 @@ static bool setting_append_list(
                parent_group);
          MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
                CMD_EVENT_CLOUD_GAMES);
+
+         CONFIG_ACTION(
+               list, list_info,
+               MENU_ENUM_LABEL_CLOUD_UPLOAD,
+               MENU_ENUM_LABEL_VALUE_CLOUD_UPLOAD,
+               &group_info,
+               &subgroup_info,
+               parent_group);
+         MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
+               CMD_EVENT_CLOUD_UPLOAD);
 #endif
 
          CONFIG_ACTION(
@@ -11924,6 +11934,16 @@ static bool setting_append_list(
                parent_group);
          MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
                CMD_EVENT_CLOUD_GAMES);
+
+         CONFIG_ACTION(
+               list, list_info,
+               MENU_ENUM_LABEL_CLOUD_UPLOAD,
+               MENU_ENUM_LABEL_VALUE_CLOUD_UPLOAD,
+               &group_info,
+               &subgroup_info,
+               parent_group);
+         MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info,
+               CMD_EVENT_CLOUD_UPLOAD);
 #endif
 
          CONFIG_STRING(

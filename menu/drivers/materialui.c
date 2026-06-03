@@ -10762,6 +10762,11 @@ static int materialui_list_push(void *data, void *userdata,
                   MENU_ENUM_LABEL_CLOUD_GAMES,
                   PARSE_ACTION,
                   false);
+            MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(
+                  info->list,
+                  MENU_ENUM_LABEL_CLOUD_UPLOAD,
+                  PARSE_ACTION,
+                  false);
 #endif
 
             if (settings->bools.cloud_sync_enable)
@@ -12059,6 +12064,7 @@ static void materialui_list_insert(void *userdata,
 #ifdef ANDROID
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_SYNC_ACCOUNT))
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_GAMES))
+                     || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_UPLOAD))
 #endif
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_SYNC_SYNC_NOW))
                   )

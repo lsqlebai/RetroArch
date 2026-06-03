@@ -3735,6 +3735,10 @@ MSG_HASH(
    "cloud_games"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_CLOUD_UPLOAD,
+   "cloud_upload"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_CLOUD_SYNC_URL,
    "cloud_sync_url"
    )

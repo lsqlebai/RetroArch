@@ -270,6 +270,7 @@ DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_sync_sync_system,        MENU_
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_sync_driver,             MENU_ENUM_SUBLABEL_CLOUD_SYNC_DRIVER)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_sync_account,            MENU_ENUM_SUBLABEL_CLOUD_SYNC_ACCOUNT)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_games,                   MENU_ENUM_SUBLABEL_CLOUD_GAMES)
+DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_upload,                  MENU_ENUM_SUBLABEL_CLOUD_UPLOAD)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_sync_url,                MENU_ENUM_SUBLABEL_CLOUD_SYNC_URL)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_sync_username,           MENU_ENUM_SUBLABEL_CLOUD_SYNC_USERNAME)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_cloud_sync_password,           MENU_ENUM_SUBLABEL_CLOUD_SYNC_PASSWORD)
@@ -5288,6 +5289,9 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
             break;
          case MENU_ENUM_LABEL_CLOUD_GAMES:
             BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_cloud_games);
+            break;
+         case MENU_ENUM_LABEL_CLOUD_UPLOAD:
+            BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_cloud_upload);
             break;
 #endif
          case MENU_ENUM_LABEL_CLOUD_SYNC_URL:

@@ -237,7 +237,15 @@ MSG_HASH(
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_CLOUD_SYNC_SYNC_NOW,
-   "Manually trigger cloud synchronization."
+   "Manually trigger two-way cloud synchronization."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_CLOUD_UPLOAD,
+   "Upload Saves"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_CLOUD_UPLOAD,
+   "Upload local save files and save states to the cloud for the current game."
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_QUIT_RETROARCH_NOSAVE,
@@ -1404,7 +1412,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_CLOUD_GAMES,
-   "Download and launch games published by the cloud sync service."
+   "Download games published by the cloud sync service."
    )
 MSG_HASH(
    MENU_ENUM_LABEL_VALUE_CLOUD_SYNC_URL,

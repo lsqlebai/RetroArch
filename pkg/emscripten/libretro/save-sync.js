@@ -23,6 +23,7 @@
    var DEVICE_ID_KEY = "retroarch-cloud-sync-device-id";
    var SYNC_DEBOUNCE_MS = 8000;
    var INITIAL_SYNC_TIMEOUT_MS = 5000;
+   var syncNoticeTimer = null;
 
    function makeDeviceId() {
       if (global.crypto && global.crypto.randomUUID)
@@ -219,9 +220,44 @@
                err.status = resp.status;
                throw err;
             }
+            data.__headers = resp.headers;
             return data;
          });
       });
+   }
+
+   function shortVersion(version) {
+      if (!version)
+         return "unknown";
+      return version.indexOf(":") >= 0 ? version.slice(0, 19) : version.slice(0, 12);
+   }
+
+   function manifestMetaFromResponse(data) {
+      var files = Array.isArray(data) ? data : (data.files || []);
+      var headers = data.__headers;
+      return {
+         version: headers ? headers.get("X-RetroArch-Cloud-Manifest-Version") : null,
+         updatedAt: headers ? headers.get("X-RetroArch-Cloud-Manifest-Updated-At") : null,
+         entries: headers && headers.get("X-RetroArch-Cloud-Manifest-Entries")
+            ? Number(headers.get("X-RetroArch-Cloud-Manifest-Entries")) : files.length,
+         files: files
+      };
+   }
+
+   function stripResponseHeaders(data) {
+      if (data && data.__headers)
+         delete data.__headers;
+      return data;
+   }
+
+   function isFinalStatus(status) {
+      return status === "synced" ||
+         status === "uploaded" ||
+         status === "downloaded" ||
+         status === "conflict" ||
+         status === "offline" ||
+         status.indexOf("failed") >= 0 ||
+         status.indexOf("skipped") >= 0;
    }
 
    function SaveSync() {
@@ -239,6 +275,7 @@
       this.pendingTimer = null;
       this.suppressDirty = false;
       this.hasDirtyHint = false;
+      this.lastServerManifestMeta = null;
       localStorage.setItem(DEVICE_ID_KEY, this.deviceId);
    }
 
@@ -265,10 +302,29 @@
    };
 
    SaveSync.prototype.setStatus = function(status, detail) {
+      var text = detail ? status + ": " + detail : status;
       console.log("[SaveSync]", status, detail || "");
       var el = document.getElementById("syncStatus");
       if (el)
-         el.textContent = detail ? status + ": " + detail : status;
+         el.textContent = text;
+      var menuVersion = document.getElementById("menuSyncVersion");
+      if (menuVersion)
+      {
+         menuVersion.textContent = "Cloud: " + (detail || status);
+         menuVersion.title = text;
+      }
+      var notice = document.getElementById("syncNotice");
+      if (notice && (detail || isFinalStatus(status)))
+      {
+         notice.textContent = text;
+         notice.className = "sync-notice show" +
+            (status.indexOf("failed") >= 0 || status === "offline" ? " error" : "");
+         if (syncNoticeTimer)
+            clearTimeout(syncNoticeTimer);
+         syncNoticeTimer = setTimeout(function() {
+            notice.className = "sync-notice";
+         }, 7000);
+      }
       var conflicts = document.getElementById("syncConflicts");
       if (conflicts)
          conflicts.textContent = String(this.getPendingConflicts().length);
@@ -414,18 +470,44 @@
    };
 
    SaveSync.prototype.fetchServerManifest = function() {
+      var self = this;
       return requestJson(this.apiBase + "/manifest?userId=" + encodeURIComponent(this.userId) +
             "&gameId=" + encodeURIComponent(this.gameId))
          .then(function(data) {
-            return Array.isArray(data) ? data : (data.files || []);
+            var meta = manifestMetaFromResponse(data);
+            var files = stripResponseHeaders(meta.files);
+            self.lastServerManifestMeta = meta;
+            console.log("[SaveSync] remote manifest", {
+               userId: self.userId,
+               gameId: self.gameId,
+               version: meta.version,
+               updatedAt: meta.updatedAt,
+               entries: meta.entries,
+               files: meta.files
+            });
+            return files;
          });
    };
 
    SaveSync.prototype.putServerManifest = function(manifest) {
+      var self = this;
       return requestJson(this.apiBase + "/manifest?userId=" + encodeURIComponent(this.userId) +
             "&gameId=" + encodeURIComponent(this.gameId), {
          method: "PUT",
          body: JSON.stringify(manifest)
+      }).then(function(data) {
+         var meta = manifestMetaFromResponse(data);
+         var files = stripResponseHeaders(meta.files);
+         self.lastServerManifestMeta = meta;
+         console.log("[SaveSync] remote manifest updated", {
+            userId: self.userId,
+            gameId: self.gameId,
+            version: meta.version,
+            updatedAt: meta.updatedAt,
+            entries: meta.entries,
+            files: meta.files
+         });
+         return files;
       });
    };
 
@@ -571,9 +653,15 @@
 
    SaveSync.prototype.syncNow = async function() {
       if (!this.initialized && !this.Module)
+      {
+         this.setStatus("sync skipped", "not initialized");
          return;
+      }
       if (this.syncing)
+      {
+         this.setStatus("sync skipped", "already running");
          return;
+      }
 
       this.syncing = true;
       this.setStatus("syncing");
@@ -676,7 +764,9 @@
          await this.putServerManifest(mapToManifest(updatedServer));
          this.saveLocalManifest(mapToManifest(updatedLocal));
          this.hasDirtyHint = false;
-         this.setStatus(this.getPendingConflicts().length ? "conflict" : "synced");
+         this.setStatus(this.getPendingConflicts().length ? "conflict" : "synced",
+               "remote " + shortVersion(this.lastServerManifestMeta && this.lastServerManifestMeta.version) +
+               " / " + (this.lastServerManifestMeta ? this.lastServerManifestMeta.entries : Object.keys(updatedLocal).length) + " entries");
       } finally {
          this.syncing = false;
       }
@@ -684,9 +774,15 @@
 
    SaveSync.prototype.uploadNow = async function() {
       if (!this.initialized && !this.Module)
+      {
+         this.setStatus("upload skipped", "not initialized");
          return;
+      }
       if (this.syncing)
+      {
+         this.setStatus("upload skipped", "sync already running");
          return;
+      }
 
       if (this.pendingTimer)
       {
@@ -772,7 +868,9 @@
          await this.putServerManifest(mapToManifest(updatedServer));
          this.saveLocalManifest(mapToManifest(updatedLocal));
          this.hasDirtyHint = false;
-         this.setStatus(this.getPendingConflicts().length ? "conflict" : "uploaded");
+         this.setStatus(this.getPendingConflicts().length ? "conflict" : "uploaded",
+               "remote " + shortVersion(this.lastServerManifestMeta && this.lastServerManifestMeta.version) +
+               " / " + (this.lastServerManifestMeta ? this.lastServerManifestMeta.entries : Object.keys(updatedLocal).length) + " entries");
       } finally {
          this.syncing = false;
       }
@@ -797,11 +895,13 @@
             initialized: this.initialized,
             hasModule: !!this.Module
          });
+         this.setStatus("download skipped", "not initialized");
          return;
       }
       if (this.syncing)
       {
          console.warn("[SaveSync] download skipped: sync already running");
+         this.setStatus("download skipped", "sync already running");
          return;
       }
 
@@ -871,10 +971,14 @@
          this.saveConflicts();
          this.saveLocalManifest(mapToManifest(updatedLocal));
          this.hasDirtyHint = false;
-         this.setStatus("downloaded", Object.keys(updatedLocal).length + " entries");
+         this.setStatus("downloaded",
+               "remote " + shortVersion(this.lastServerManifestMeta && this.lastServerManifestMeta.version) +
+               " / " + Object.keys(updatedLocal).length + " entries");
          console.log("[SaveSync] download complete", {
             userId: this.userId,
             gameId: this.gameId,
+            remoteManifestVersion: this.lastServerManifestMeta && this.lastServerManifestMeta.version,
+            remoteManifestFiles: this.lastServerManifestMeta && this.lastServerManifestMeta.files,
             localManifestEntries: Object.keys(updatedLocal).length
          });
       } catch (e) {
@@ -893,6 +997,7 @@
       syncNow: function() { return instance.syncNow(); },
       uploadNow: function() { return instance.uploadNow(); },
       downloadNow: function() { return instance.downloadNow(); },
+      setStatus: function(status, detail) { return instance.setStatus(status, detail); },
       markDirty: function(path) {
          instance.hasDirtyHint = true;
          instance.scheduleSync();

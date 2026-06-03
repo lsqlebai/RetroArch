@@ -11108,6 +11108,7 @@ unsigned menu_displaylist_build_list(
 #ifdef ANDROID
                {MENU_ENUM_LABEL_CLOUD_SYNC_ACCOUNT,      PARSE_ACTION,              true},
                {MENU_ENUM_LABEL_CLOUD_GAMES,             PARSE_ACTION,              true},
+               {MENU_ENUM_LABEL_CLOUD_UPLOAD,            PARSE_ACTION,              true},
 #endif
                {MENU_ENUM_LABEL_CLOUD_SYNC_URL,          PARSE_ONLY_STRING,         false},
                {MENU_ENUM_LABEL_CLOUD_SYNC_USERNAME,     PARSE_ONLY_STRING,         false},
@@ -15294,6 +15295,11 @@ bool menu_displaylist_ctl(enum menu_displaylist_ctl_state type,
                if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(
                      info->list,
                      MENU_ENUM_LABEL_CLOUD_GAMES,
+                     PARSE_ACTION, false) == 0)
+                  count++;
+               if (MENU_DISPLAYLIST_PARSE_SETTINGS_ENUM(
+                     info->list,
+                     MENU_ENUM_LABEL_CLOUD_UPLOAD,
                      PARSE_ACTION, false) == 0)
                   count++;
 #endif
