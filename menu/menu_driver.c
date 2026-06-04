@@ -73,6 +73,14 @@
 #include "../version.h"
 #include "../misc/cpufreq/cpufreq.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
+#ifdef ANDROID
+#include "../frontend/drivers/platform_unix.h"
+#endif
+
 #ifdef HAVE_LIBNX
 #include <switch.h>
 #include "../switch_performance_profiles.h"
@@ -4579,6 +4587,97 @@ void menu_input_dialog_end(void)
 #endif
 }
 
+#ifdef __EMSCRIPTEN__
+#define MENU_INPUT_DIALOG_KEEPALIVE EMSCRIPTEN_KEEPALIVE
+#else
+#define MENU_INPUT_DIALOG_KEEPALIVE
+#endif
+
+MENU_INPUT_DIALOG_KEEPALIVE void menu_input_dialog_complete_text(
+      const char *text, bool accepted)
+{
+   input_driver_state_t *input_st             = input_state_get_ptr();
+   struct menu_state *menu_st                 = &menu_driver_state;
+
+   if (!(menu_st->flags & MENU_ST_FLAG_INP_DLG_KB_DISPLAY))
+      return;
+   if (!input_st->keyboard_line.enabled)
+      return;
+
+   if (!accepted)
+   {
+      input_keyboard_line_free(input_st);
+      input_st->flags &= ~INP_FLAG_KB_MAPPING_BLOCKED;
+      menu_input_dialog_end();
+      return;
+   }
+
+   if (!string_is_empty(text))
+      input_keyboard_line_append(&input_st->keyboard_line,
+            text, strlen(text));
+
+   input_keyboard_event(true, RETROK_RETURN, '\n', 0,
+         RETRO_DEVICE_KEYBOARD);
+
+   if (menu_st->flags & MENU_ST_FLAG_INP_DLG_KB_DISPLAY)
+      menu_input_dialog_end();
+}
+
+static bool menu_input_dialog_start_platform(const char *label)
+{
+#if defined(ANDROID)
+   JNIEnv *env;
+   jstring jlabel;
+
+   if (!g_android || !g_android->activity
+         || !g_android->showTextInputDialog)
+      return false;
+
+   env = jni_thread_getenv();
+   if (!env)
+      return false;
+
+   jlabel = (*env)->NewStringUTF(env, label ? label : "");
+   if (!jlabel)
+      return false;
+
+   (*env)->CallVoidMethod(env,
+         g_android->activity->clazz,
+         g_android->showTextInputDialog,
+         jlabel);
+   (*env)->DeleteLocalRef(env, jlabel);
+
+   if ((*env)->ExceptionOccurred(env))
+   {
+      (*env)->ExceptionDescribe(env);
+      (*env)->ExceptionClear(env);
+      return false;
+   }
+
+   return true;
+#elif defined(__EMSCRIPTEN__)
+   MAIN_THREAD_EM_ASM({
+      var label = UTF8ToString($0);
+      setTimeout(function() {
+         var result = window.prompt(label || "Text Input", "");
+         var accepted = result !== null;
+         var ptr = 0;
+         if (accepted && result)
+            ptr = stringToNewUTF8(result);
+         if (typeof Module !== "undefined" &&
+               typeof Module._menu_input_dialog_complete_text === "function")
+            Module._menu_input_dialog_complete_text(ptr, accepted ? 1 : 0);
+         if (ptr)
+            _free(ptr);
+      }, 0);
+   }, label ? label : "");
+   return true;
+#else
+   (void)label;
+   return false;
+#endif
+}
+
 #if defined(_MSC_VER)
 static const char * msvc_vercode_to_str(const unsigned vercode)
 {
@@ -8236,6 +8335,9 @@ bool menu_input_dialog_start_search(void)
          msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SEARCH),
          menu_input_search_cb,
          menu);
+#else
+   menu_input_dialog_start_platform(
+         msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SEARCH));
 #endif
 
    /* While reading keyboard line input, we have to block all hotkeys. */
@@ -8308,6 +8410,8 @@ bool menu_input_dialog_start(menu_input_ctx_line_t *line)
          line->label,
          line->cb,
          menu);
+#else
+   menu_input_dialog_start_platform(line->label);
 #endif
 
    /* While reading keyboard line input, we have to block all hotkeys. */

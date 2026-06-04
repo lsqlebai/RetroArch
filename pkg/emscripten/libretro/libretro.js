@@ -5,7 +5,7 @@
  */
 
 const defaultCore = "dosbox_pure";
-const coreAssetVersion = "20260602-190000";
+const coreAssetVersion = "20260604-160000";
 const authApiBase = "/api/sync/v1/auth";
 var autoStart = true;
 var debugParams = new URLSearchParams(window.location.search);

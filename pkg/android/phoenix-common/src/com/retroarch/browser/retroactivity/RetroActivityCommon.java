@@ -243,6 +243,50 @@ public class RetroActivityCommon extends NativeActivity
     }).start();
   }
 
+  public void showTextInputDialog(final String title)
+  {
+    runOnUiThread(new Runnable() {
+      @Override
+      public void run() {
+        final EditText input = new EditText(RetroActivityCommon.this);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL);
+
+        final AlertDialog dialog = new AlertDialog.Builder(RetroActivityCommon.this)
+              .setTitle(title == null || title.length() == 0 ? "Text Input" : title)
+              .setView(input)
+              .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialogInterface, int which) {
+                  textInputDialogResult("", false);
+                }
+              })
+              .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialogInterface, int which) {
+                  textInputDialogResult(input.getText().toString(), true);
+                }
+              })
+              .create();
+
+        dialog.setOnCancelListener(new DialogInterface.OnCancelListener() {
+          @Override
+          public void onCancel(DialogInterface dialogInterface) {
+            textInputDialogResult("", false);
+          }
+        });
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+          @Override
+          public void onShow(DialogInterface dialogInterface) {
+            input.requestFocus();
+            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+          }
+        });
+        dialog.show();
+      }
+    });
+  }
+
   private void showCloudGamesDialogOnUiThread(final List<CloudGameManager.CloudGame> games)
   {
     if (games == null || games.isEmpty())
@@ -801,6 +845,11 @@ public class RetroActivityCommon extends NativeActivity
    * Called when the user grants access to a Storage Access Framework tree.
    */
   public native void safTreeAdded(String tree);
+
+  /**
+   * Called when a native platform text input dialog is completed.
+   */
+  public native void textInputDialogResult(String text, boolean accepted);
 
 
 

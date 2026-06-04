@@ -8776,7 +8776,6 @@ static void materialui_init_font(gfx_display_t *p_disp,
    char fontpath[PATH_MAX_LENGTH];
    const char *wideglyph_str = msg_hash_get_wideglyph_str();
    settings_t *settings      = config_get_ptr();
-   const char *dir_assets    = settings->paths.directory_assets;
    fontpath[0]               = '\0';
 
    /* We assume the average glyph aspect ratio is close to 3:4 */
@@ -8811,9 +8810,17 @@ static void materialui_init_font(gfx_display_t *p_disp,
                sizeof(fontpath));
          break;
       default:
-         fill_pathname_join_special(tmp_dir, dir_assets, "glui", sizeof(tmp_dir));
+#if defined(ANDROID) || defined(__EMSCRIPTEN__)
+         fill_pathname_join_special(tmp_dir,
+               settings->paths.directory_assets, "pkg", sizeof(tmp_dir));
+         fill_pathname_join_special(fontpath, tmp_dir, "chinese-fallback-font.ttf",
+               sizeof(fontpath));
+#else
+         fill_pathname_join_special(tmp_dir,
+               settings->paths.directory_assets, "glui", sizeof(tmp_dir));
          fill_pathname_join_special(fontpath, tmp_dir, FILE_PATH_TTF_FONT,
                sizeof(fontpath));
+#endif
          break;
    }
 
@@ -11840,6 +11847,7 @@ static void materialui_list_insert(void *userdata,
                node->icon_type          = MUI_ICON_TYPE_INTERNAL;
             }
             else if (   string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_RENAME_ENTRY))
+                     || string_is_equal(label, "rename_state_slot")
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_RESET_CORE_ASSOCIATION))
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_PLAYLIST_MANAGER_RESET_CORES))
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_PLAYLIST_MANAGER_CLEAN_PLAYLIST))
@@ -11937,6 +11945,9 @@ static void materialui_list_insert(void *userdata,
                   || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_SAVE_CURRENT_CONFIG_OVERRIDE_GAME))
                   || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_QUICK_MENU_OVERRIDE_OPTIONS))
                   || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_NETWORK_ON_DEMAND_THUMBNAILS))
+#ifdef ANDROID
+                  || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_UPLOAD))
+#endif
                   )
             {
                node->icon_texture_index = MUI_TEXTURE_SAVE_STATE;
@@ -12064,7 +12075,6 @@ static void materialui_list_insert(void *userdata,
 #ifdef ANDROID
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_SYNC_ACCOUNT))
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_GAMES))
-                     || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_UPLOAD))
 #endif
                      || string_is_equal(label, msg_hash_to_str(MENU_ENUM_LABEL_CLOUD_SYNC_SYNC_NOW))
                   )

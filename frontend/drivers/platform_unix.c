@@ -808,6 +808,37 @@ JNIEXPORT void JNICALL Java_com_retroarch_browser_retroactivity_RetroActivityCom
 #endif
 }
 
+JNIEXPORT void JNICALL Java_com_retroarch_browser_retroactivity_RetroActivityCommon_textInputDialogResult
+      (JNIEnv *env, jobject this_obj, jstring text_obj, jboolean accepted)
+{
+#ifdef HAVE_MENU
+   const char *text = NULL;
+
+   (void)this_obj;
+
+   if (text_obj)
+   {
+      text = (*env)->GetStringUTFChars(env, text_obj, NULL);
+      if ((*env)->ExceptionOccurred(env))
+      {
+         (*env)->ExceptionDescribe(env);
+         (*env)->ExceptionClear(env);
+         return;
+      }
+   }
+
+   menu_input_dialog_complete_text(text, accepted == JNI_TRUE);
+
+   if (text)
+      (*env)->ReleaseStringUTFChars(env, text_obj, text);
+#else
+   (void)env;
+   (void)this_obj;
+   (void)text_obj;
+   (void)accepted;
+#endif
+}
+
 #elif !defined(DINGUX)
 static bool make_proc_acpi_key_val(char **_ptr, char **_key, char **_val)
 {
@@ -2311,6 +2342,8 @@ static void frontend_unix_init(void *data)
          "showCloudSyncAccountDialog", "()V");
    GET_METHOD_ID(env, android_app->showCloudGamesDialog, class,
          "showCloudGamesDialog", "()V");
+   GET_METHOD_ID(env, android_app->showTextInputDialog, class,
+         "showTextInputDialog", "(Ljava/lang/String;)V");
    GET_METHOD_ID(env, android_app->getCloudSyncServerUrl, class,
          "getCloudSyncServerUrl", "()Ljava/lang/String;");
    GET_METHOD_ID(env, android_app->getCloudSyncCookieHeader, class,

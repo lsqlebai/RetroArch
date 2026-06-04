@@ -72,6 +72,7 @@
 #endif
 
 #include "../frontend/frontend_driver.h"
+#include "../tasks/state_labels.h"
 
 #include "../camera/camera_driver.h"
 #include "../gfx/gfx_animation.h"
@@ -3107,10 +3108,15 @@ static size_t setting_get_string_representation_video_font_path(
 static size_t setting_get_string_representation_state_slot(
       rarch_setting_t *setting, char *s, size_t len)
 {
+   char label[NAME_MAX_LENGTH];
+
    if (!setting)
       return 0;
    if (*setting->value.target.integer == -1)
       return strlcpy(s, "Auto", len);
+   if (state_labels_get_display_for_slot(*setting->value.target.integer,
+            label, sizeof(label)))
+      return strlcpy(s, label, len);
    return snprintf(s, len, "%d", *setting->value.target.integer);
 }
 

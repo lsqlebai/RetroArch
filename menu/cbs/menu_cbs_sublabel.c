@@ -2216,6 +2216,15 @@ static int action_bind_sublabel_generic(
    return 0;
 }
 
+static int action_bind_sublabel_rename_state_slot(
+      file_list_t *list,
+      unsigned type, unsigned i,
+      const char *label, const char *path,
+      char *s, size_t len)
+{
+   return strlcpy(s, "Rename the currently selected state slot.", len);
+}
+
 int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       const char *path,
       const char *label, size_t lbl_len,
@@ -2304,6 +2313,12 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       return -1;
 
    BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_generic);
+
+   if (string_is_equal(label, "rename_state_slot"))
+   {
+      BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_rename_state_slot);
+      return 0;
+   }
 
    for (i = 0; i < ARRAY_SIZE(info_list); i++)
    {

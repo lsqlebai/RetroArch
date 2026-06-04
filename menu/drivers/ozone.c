@@ -9646,7 +9646,12 @@ static void ozone_set_layout(
          fill_pathname_join_special(font_path, tmp_dir, "korean-fallback-font.ttf", sizeof(font_path));
          break;
       default:
+#if defined(ANDROID) || defined(__EMSCRIPTEN__)
+         fill_pathname_join_special(tmp_dir, path_directory_assets, "pkg", sizeof(tmp_dir));
+         fill_pathname_join_special(font_path, tmp_dir, "chinese-fallback-font.ttf", sizeof(font_path));
+#else
          fill_pathname_join_special(font_path, ozone->assets_path, "bold.ttf", sizeof(font_path));
+#endif
          break;
    }
 
@@ -9675,7 +9680,12 @@ static void ozone_set_layout(
          fill_pathname_join_special(font_path, tmp_dir, "korean-fallback-font.ttf", sizeof(font_path));
          break;
       default:
+#if defined(ANDROID) || defined(__EMSCRIPTEN__)
+         fill_pathname_join_special(tmp_dir, path_directory_assets, "pkg", sizeof(tmp_dir));
+         fill_pathname_join_special(font_path, tmp_dir, "chinese-fallback-font.ttf", sizeof(font_path));
+#else
          fill_pathname_join_special(font_path, ozone->assets_path, "regular.ttf", sizeof(font_path));
+#endif
          break;
    }
 
@@ -9683,6 +9693,9 @@ static void ozone_set_layout(
       strlcpy(font_path, path_menu_font, sizeof(font_path));
 
    ozone->font_unicode = !string_is_equal(path_menu_font, FILE_PATH_UNKNOWN) ? true : false;
+#if defined(ANDROID) || defined(__EMSCRIPTEN__)
+   ozone->font_unicode = true;
+#endif
 
    /* Sidebar */
    font_inited = ozone_init_font(&ozone->fonts.sidebar,

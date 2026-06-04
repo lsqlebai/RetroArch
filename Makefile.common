@@ -274,6 +274,7 @@ endif
 OBJ += \
        save.o \
        tasks/task_save.o \
+       tasks/state_labels.o \
        tasks/task_movie.o \
        tasks/task_file_transfer.o \
        tasks/task_image.o \

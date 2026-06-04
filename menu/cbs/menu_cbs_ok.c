@@ -68,6 +68,7 @@
 #include "../../tasks/task_audio_mixer.h"
 #endif
 #include "../../tasks/task_content.h"
+#include "../../tasks/state_labels.h"
 #include "../../tasks/task_file_transfer.h"
 #include "../../tasks/tasks_internal.h"
 #include "../../input/input_remapping.h"
@@ -4859,6 +4860,50 @@ static int action_ok_save_state(const char *path,
    return 0;
 }
 
+static void action_ok_rename_state_slot_cb(void *userdata, const char *line)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+   int slot                  = (int)menu_st->input_dialog_kb_idx;
+   bool success              = state_labels_set_label_for_slot(slot, line);
+   const char *msg           = success
+         ? "State slot renamed"
+         : "No save state in this slot";
+
+   (void)userdata;
+
+   runloop_msg_queue_push(msg, strlen(msg), 1, 120, true, NULL,
+         MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+
+   menu_st->flags           |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+   menu_input_dialog_end();
+}
+
+static int action_ok_rename_state_slot(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   int slot                  = config_get_ptr()->ints.state_slot;
+   menu_input_ctx_line_t line_input;
+
+   if (slot < 0)
+   {
+      const char *msg = "No save state in this slot";
+      runloop_msg_queue_push(msg, strlen(msg), 1, 120, true, NULL,
+            MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+      return -1;
+   }
+
+   line_input.label         = "Rename Slot";
+   line_input.label_setting = NULL;
+   line_input.type          = type;
+   line_input.idx           = (unsigned)slot;
+   line_input.cb            = action_ok_rename_state_slot_cb;
+
+   if (!menu_input_dialog_start(&line_input))
+      return -1;
+
+   return 0;
+}
+
 static int action_ok_play_replay(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -8977,6 +9022,12 @@ static int is_rdb_entry(enum msg_hash_enums enum_idx)
 static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
       const char *label)
 {
+   if (string_is_equal(label, "rename_state_slot"))
+   {
+      BIND_ACTION_OK(cbs, action_ok_rename_state_slot);
+      return 0;
+   }
+
    if (cbs->enum_idx != MSG_UNKNOWN)
    {
       const char     *str = msg_hash_to_str(cbs->enum_idx);

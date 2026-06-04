@@ -36,6 +36,7 @@
 
 #define MANIFEST_FILENAME_LOCAL  "manifest.local"
 #define MANIFEST_FILENAME_SERVER "manifest.server"
+#define STATE_LABELS_FILENAME    "states/state-labels.json"
 
 #define CS_FILE_HASH(item_file) ((char*)((item_file) ? ((item_file)->userdata) : (NULL)))
 #define CS_FILE_KEY(item_file) ((item_file) ? ((item_file)->alt) : (NULL))
@@ -259,6 +260,9 @@ static void task_cloud_sync_read_local_manifest(task_cloud_sync_state_t *sync_st
 /* takes the filename in manifest format, e.g. "config/retroarch.cfg" */
 static bool task_cloud_sync_should_ignore_file(const char *filename)
 {
+   if (string_is_equal(filename, STATE_LABELS_FILENAME))
+      return false;
+
    if (string_starts_with(filename, "config/"))
    {
       const char *path = filename + STRLEN_CONST("config/");

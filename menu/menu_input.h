@@ -266,6 +266,8 @@ bool menu_input_dialog_get_display_kb(void);
 
 void menu_input_dialog_end(void);
 
+void menu_input_dialog_complete_text(const char *text, bool accepted);
+
 /* TODO/FIXME - public global variables */
 extern struct key_desc key_descriptors[RARCH_MAX_KEYS];
 

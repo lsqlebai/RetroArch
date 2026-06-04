@@ -9,7 +9,7 @@ notes here.
 - Android Studio/Gradle project: `pkg/android/phoenix`
 - Shared Android native build files: `pkg/android/phoenix-common`
 - Debug APK output:
-  `pkg/android/phoenix/build/outputs/apk/normal/debug/phoenix-normal-debug.apk`
+  `pkg/android/phoenix/build/outputs/apk/normal/debug/RetroArch-normal-debug-*.apk`
 
 ## Known-Good Local Build Environment
 
@@ -189,6 +189,30 @@ shape as web:
 - deletes are tombstones with `hash: null`
 - conflicts use the same three-way comparison:
   server manifest vs last local manifest vs current local files
+
+State labels are cross-platform metadata. Web and Android/native must treat
+the following file as a normal synced state file:
+
+```text
+states/state-labels.json
+```
+
+The file is a JSON object keyed by the same portable state paths used in the
+sync manifest, relative to the `states/` sync root:
+
+```json
+{
+  "DOSBox-pure/sgzyjz.state": "Opening inventory",
+  "DOSBox-pure/sgzyjz.state3": "Before boss"
+}
+```
+
+Do not rename the actual `.state`, `.state1`, `.state2`, etc. files to store
+labels. RetroArch derives save-state load paths from numeric slots, so the
+metadata file carries display names while the real slot files keep their
+RetroArch-compatible names. The metadata file is intentionally not hidden:
+native cloud sync does not enumerate hidden files, and Android must not filter
+this JSON out when syncing the `states/` tree.
 
 Cookie auth is fine for web. Android should use token-based auth returned by
 the server and sent as an authorization header, because Android clients do not

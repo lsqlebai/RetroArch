@@ -171,6 +171,7 @@ struct android_app
    jmethodID doHapticFeedback;
    jmethodID showCloudSyncAccountDialog;
    jmethodID showCloudGamesDialog;
+   jmethodID showTextInputDialog;
    jmethodID getCloudSyncServerUrl;
    jmethodID getCloudSyncCookieHeader;
    jmethodID getCloudSyncGameId;
