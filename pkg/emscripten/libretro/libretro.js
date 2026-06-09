@@ -5,7 +5,7 @@
  */
 
 const defaultCore = "dosbox_pure";
-const coreAssetVersion = "20260604-160000";
+const coreAssetVersion = "20260609-230008";
 const authApiBase = "/api/sync/v1/auth";
 var autoStart = true;
 var debugParams = new URLSearchParams(window.location.search);
@@ -25,6 +25,7 @@ var retroArchRunning = false;
 var saveSyncReady = Promise.resolve();
 var authReady = Promise.resolve(null);
 var authModalMode = "login";
+var cloudGamesCache = null;
 var canvas = document.getElementById("canvas");
 
 function setMenuItemEnabled(id, enabled) {
@@ -97,13 +98,20 @@ function updateAuthUi() {
       if (disabledStatus)
          disabledStatus.textContent = "sync disabled";
    }
+   updateCloudGameUi();
 }
 
 function loadCurrentUser() {
    return authRequest("/me", {method: "GET"}).then(function(data) {
       currentUser = data.user || null;
       updateAuthUi();
-      return currentUser;
+      if (!currentUser)
+         return currentUser;
+      return fetchCloudGames(true).catch(function(e) {
+         console.warn("WEBPLAYER: cloud games load failed", e);
+      }).then(function() {
+         return currentUser;
+      });
    }).catch(function(e) {
       currentUser = null;
       updateAuthUi();
@@ -273,6 +281,15 @@ function initSaveSync(game) {
    }
    if (!window.RetroArchSaveSync)
       return Promise.resolve();
+   if (!game)
+   {
+      setSyncControlsEnabled(!!currentUser);
+      var selectStatus = document.getElementById("syncStatus");
+      if (selectStatus)
+         selectStatus.textContent = "select cloud game";
+      updateCloudGameUi();
+      return Promise.resolve();
+   }
    if (!currentUser)
    {
       console.log("WEBPLAYER: save sync waiting for login", {
@@ -305,26 +322,113 @@ function restartSaveSyncForUser() {
    });
 }
 
-function discoverCurrentGame() {
+function shortCloudHash(value) {
+   value = value || "";
+   if (value.indexOf("sha256:") === 0)
+      return "sha256:" + value.slice(7, 19);
+   return value.length > 19 ? value.slice(0, 19) : value;
+}
+
+function cloudGameBaseName(game) {
+   var name = (game && (game.fileName || game.title)) || "Game";
+   var slash = Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\"));
+   if (slash >= 0)
+      name = name.slice(slash + 1);
+   return name.replace(/\.[^.]+$/, "");
+}
+
+function cloudGameLabel(game) {
+   if (!game)
+      return "not selected";
+   return cloudGameBaseName(game) + "-" + shortCloudHash(game.contentHash || game.gameId);
+}
+
+function updateCloudGameUi() {
+   var item = document.getElementById("menuCloudGame");
+   if (item)
+      item.textContent = "Game: " + cloudGameLabel(currentGame);
+   renderCloudGameMenu(cloudGamesCache || []);
+}
+
+function fetchCloudGames(force) {
+   if (cloudGamesCache && !force)
+      return Promise.resolve(cloudGamesCache);
    return fetch("/api/sync/v1/games").then(function(resp) {
       if (!resp.ok)
          throw new Error("games API returned HTTP " + resp.status);
       return resp.json();
    }).then(function(games) {
-      games = Array.isArray(games) ? games : [];
+      cloudGamesCache = Array.isArray(games) ? games : [];
+      renderCloudGameMenu(cloudGamesCache);
+      return cloudGamesCache;
+   });
+}
+
+function renderCloudGameMenu(games) {
+   var menu = document.getElementById("cloud-game-menu");
+   if (!menu)
+      return;
+   menu.innerHTML = "";
+   if (!currentUser)
+      return;
+
+   if (!games)
+      games = [];
+
+   if (!games.length)
+   {
+      var empty = document.createElement("span");
+      empty.className = "dropdown-item disabled auth-logged-in";
+      empty.textContent = "No cloud games";
+      menu.appendChild(empty);
+      return;
+   }
+
+   games.forEach(function(game, index) {
+      var item = document.createElement("a");
+      var selected = currentGame && currentGame.gameId === game.gameId;
+      item.href = "#";
+      item.className = "dropdown-item auth-logged-in";
+      item.setAttribute("data-game-index", String(index));
+      item.title = game.gameId || "";
+      var icon = document.createElement("span");
+      icon.className = "fa " + (selected ? "fa-check" : "fa-fw");
+      item.appendChild(icon);
+      item.appendChild(document.createTextNode(" " + cloudGameLabel(game)));
+      menu.appendChild(item);
+   });
+}
+
+function discoverCurrentGame() {
+   return fetchCloudGames(false).then(function(games) {
       var storedGameId = localStorage.getItem("gameId");
       var game = games.find(function(item) {
          return item.gameId === storedGameId;
-      }) || games[0] || null;
+      }) || null;
       if (game)
       {
          localStorage.setItem("gameId", game.gameId);
          console.log("WEBPLAYER: selected cloud game", game);
       }
+      updateCloudGameUi();
       return game;
    }).catch(function(e) {
       console.warn("WEBPLAYER: failed to discover cloud games", e);
+      updateCloudGameUi();
       return null;
+   });
+}
+
+function selectCloudGame(game) {
+   currentGame = game || null;
+   if (currentGame)
+      localStorage.setItem("gameId", currentGame.gameId);
+   updateCloudGameUi();
+   if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
+      return Promise.resolve(currentGame);
+   return initSaveSync(currentGame).then(function() {
+      renderSyncConflicts();
+      return currentGame;
    });
 }
 
@@ -606,7 +710,9 @@ function submitAuth(mode) {
       currentUser = data.user || null;
       updateAuthUi();
       $('#loginModal').modal('hide');
-      return restartSaveSyncForUser();
+      return fetchCloudGames(true).then(function() {
+         return restartSaveSyncForUser();
+      });
    }).catch(function(e) {
       if (message)
          message.textContent = e.message || String(e);
@@ -643,9 +749,35 @@ function setupAuthUi() {
          console.warn("WEBPLAYER: logout failed", e);
       }).then(function() {
          currentUser = null;
+         currentGame = null;
          updateAuthUi();
          renderSyncConflicts();
       });
+   });
+}
+
+function runManualSyncAction(action, iconId, status, work) {
+   if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
+   {
+      var el = document.getElementById("syncStatus");
+      if (el)
+         el.textContent = status + " unavailable";
+      return;
+   }
+
+   if (!currentGame)
+   {
+      window.RetroArchSaveSync.setStatus(status + " skipped", "select current game");
+      return;
+   }
+
+   window.RetroArchSaveSync.setStatus(status + " requested", cloudGameLabel(currentGame));
+   $(iconId).addClass('fa-spin');
+   work().catch(function(e) {
+      console.warn("WEBPLAYER: manual save " + status + " failed", e);
+   }).then(function() {
+      $(iconId).removeClass('fa-spin');
+      renderSyncConflicts();
    });
 }
 
@@ -678,39 +810,15 @@ $(function() {
 
    $('#menuSyncNow').click(function(e) {
       e.preventDefault();
-      if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
-      {
-         var syncStatus = document.getElementById("syncStatus");
-         if (syncStatus)
-            syncStatus.textContent = "sync unavailable";
-         return;
-      }
-      window.RetroArchSaveSync.setStatus("sync requested", currentGame ? currentGame.gameId : "current game");
-      $('#icnMenuSync').addClass('fa-spin');
-      window.RetroArchSaveSync.syncNow().catch(function(e) {
-         console.warn("WEBPLAYER: manual save sync failed", e);
-      }).then(function() {
-         $('#icnMenuSync').removeClass('fa-spin');
-         renderSyncConflicts();
+      runManualSyncAction("sync", "#icnMenuSync", "sync", function() {
+         return window.RetroArchSaveSync.syncNow();
       });
    });
 
    $('#menuUploadSync').click(function(e) {
       e.preventDefault();
-      if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
-      {
-         var uploadStatus = document.getElementById("syncStatus");
-         if (uploadStatus)
-            uploadStatus.textContent = "upload unavailable";
-         return;
-      }
-      window.RetroArchSaveSync.setStatus("upload requested", currentGame ? currentGame.gameId : "current game");
-      $('#icnMenuUploadSync').addClass('fa-spin');
-      window.RetroArchSaveSync.uploadNow().catch(function(e) {
-         console.warn("WEBPLAYER: manual save upload failed", e);
-      }).then(function() {
-         $('#icnMenuUploadSync').removeClass('fa-spin');
-         renderSyncConflicts();
+      runManualSyncAction("upload", "#icnMenuUploadSync", "upload", function() {
+         return window.RetroArchSaveSync.uploadNow();
       });
    });
 
@@ -727,18 +835,28 @@ $(function() {
             downloadStatus.textContent = "download unavailable";
          return;
       }
+      if (!currentGame)
+      {
+         window.RetroArchSaveSync.setStatus("download skipped", "select current game");
+         return;
+      }
       if (!confirm("Replace local saves and states with cloud data for this game?"))
       {
          console.log("WEBPLAYER: Use Cloud canceled by user");
          return;
       }
-      window.RetroArchSaveSync.setStatus("download requested", currentGame ? currentGame.gameId : "current game");
-      $('#icnMenuDownloadSync').addClass('fa-spin');
-      window.RetroArchSaveSync.downloadNow().catch(function(e) {
-         console.warn("WEBPLAYER: manual cloud restore failed", e);
-      }).then(function() {
-         $('#icnMenuDownloadSync').removeClass('fa-spin');
-         renderSyncConflicts();
+      runManualSyncAction("download", "#icnMenuDownloadSync", "download", function() {
+         return window.RetroArchSaveSync.downloadNow();
+      });
+   });
+
+   $('#cloud-game-menu').on('click', 'a[data-game-index]', function(e) {
+      e.preventDefault();
+      var index = Number(this.getAttribute('data-game-index'));
+      var games = cloudGamesCache || [];
+      var game = games[index] || null;
+      selectCloudGame(game).catch(function(err) {
+         console.warn("WEBPLAYER: failed to select cloud game", err);
       });
    });
 

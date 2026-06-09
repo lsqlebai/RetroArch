@@ -164,9 +164,26 @@ public final class CloudGameManager
 		@Override
 		public String toString()
 		{
-			if (!TextUtils.isEmpty(title))
-				return title;
-			return fileName;
+			String name = !TextUtils.isEmpty(fileName) ? fileName : title;
+			if (TextUtils.isEmpty(name))
+				name = "Game";
+
+			int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+			if (slash >= 0)
+				name = name.substring(slash + 1);
+
+			int dot = name.lastIndexOf('.');
+			if (dot > 0)
+				name = name.substring(0, dot);
+
+			String hash = !TextUtils.isEmpty(contentHash) ? contentHash : gameId;
+			if (TextUtils.isEmpty(hash))
+				return name;
+			if (hash.startsWith("sha256:") && hash.length() > 19)
+				hash = hash.substring(0, 19);
+			else if (hash.length() > 19)
+				hash = hash.substring(0, 19);
+			return name + "-" + hash;
 		}
 	}
 }
