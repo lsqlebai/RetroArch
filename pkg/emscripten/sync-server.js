@@ -68,6 +68,12 @@ function sanitizeRelPath(relPath) {
   return normalized;
 }
 
+function isProtectedCloudDataPath(relPath) {
+  return /^saves\//.test(relPath) ||
+    relPath === "states/state-labels.json" ||
+    /^states\/[^/]+\/.+\.state\d*$/.test(relPath);
+}
+
 function userRoot(userId) {
   return path.join(ROOT, "users", userId, "retroarch");
 }
@@ -317,7 +323,18 @@ async function readManifestMeta(userId, gameId) {
 }
 
 async function writeManifest(userId, gameId, manifest) {
-  manifest = normalizeManifest(manifest);
+  const current = await readManifest(userId, gameId);
+  const next = new Map();
+  for (const item of normalizeManifest(manifest)) {
+    if (isProtectedCloudDataPath(item.path) && item.hash == null)
+      continue;
+    next.set(item.path, item);
+  }
+  for (const item of current) {
+    if (isProtectedCloudDataPath(item.path) && item.hash != null && !next.has(item.path))
+      next.set(item.path, item);
+  }
+  manifest = normalizeManifest(Array.from(next.values()));
   const file = objectPath(userId, gameId, MANIFEST_FILE);
   await fs.mkdir(path.dirname(file), {recursive: true});
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -374,6 +391,8 @@ async function handlePutFile(req, res, url) {
     return sendJson(res, 200, await writeManifest(userId, gameId, body.manifest || body));
 
   const data = Buffer.from(body.data || "", "base64");
+  if (/^states\/[^/]+\/.+\.state\d*$/.test(relPath) && data.length === 0)
+    return sendJson(res, 400, {error: "refusing to store empty state file"});
   const hash = hashBytes(data);
   const file = objectPath(userId, gameId, relPath);
   await fs.mkdir(path.dirname(file), {recursive: true});
@@ -388,6 +407,8 @@ async function handleDeleteFile(req, res, url) {
   const relPath = sanitizeRelPath(body.path || url.searchParams.get("path"));
   if (relPath === MANIFEST_FILE)
     return sendJson(res, 400, {error: "cannot delete manifest through file endpoint"});
+  if (isProtectedCloudDataPath(relPath))
+    return sendJson(res, 409, {error: "refusing to delete protected cloud data", path: relPath});
 
   const source = objectPath(userId, gameId, relPath);
   try {

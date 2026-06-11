@@ -25,6 +25,7 @@
 #include <compat/strl.h>
 
 #include "../../configuration.h"
+#include "../../file_path_special.h"
 #include "../../frontend/drivers/platform_unix.h"
 #include "../../paths.h"
 #include "../../runloop.h"
@@ -51,11 +52,15 @@ typedef struct
 typedef struct
 {
    file_list_t *manifest;
+   file_list_t *server_manifest;
+   file_list_t *updated_manifest;
    uint32_t pending;
    uint32_t uploaded;
+   uint32_t skipped;
    uint32_t failed;
    bool manifest_started;
    bool manifest_uploaded;
+   bool manifest_changed;
    char manifest_path[PATH_MAX_LENGTH];
 } retroarch_sync_upload_state_t;
 
@@ -355,7 +360,183 @@ static void retroarch_sync_show_manifest_message(const char *action,
          MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
 }
 
-static bool retroarch_sync_manifest_path_member(void *ctx,
+static bool retroarch_sync_is_state_path(const char *path)
+{
+   return path && string_starts_with(path, "states/")
+      && !string_is_equal(path, "states/state-labels.json");
+}
+
+static void retroarch_sync_head_hex(char *out, size_t out_size,
+      const uint8_t *data, size_t len)
+{
+   size_t i;
+   size_t max_len = MIN(len, (size_t)16);
+
+   if (!out_size)
+      return;
+
+   out[0] = '\0';
+   if (!data)
+      return;
+
+   for (i = 0; i < max_len; i++)
+   {
+      char part[4];
+      snprintf(part, sizeof(part), "%02x", data[i]);
+      strlcat(out, part, out_size);
+      if (i + 1 < max_len)
+         strlcat(out, " ", out_size);
+   }
+}
+
+static void retroarch_sync_log_state_bytes(const char *scope,
+      const char *path, const uint8_t *data, size_t len, const char *hash)
+{
+   char head[64];
+   char magic[9];
+   size_t i;
+   size_t magic_len = MIN(len, (size_t)8);
+
+   if (!retroarch_sync_is_state_path(path))
+      return;
+
+   retroarch_sync_head_hex(head, sizeof(head), data, len);
+   memset(magic, 0, sizeof(magic));
+   for (i = 0; data && i < magic_len; i++)
+      magic[i] = data[i] >= 32 && data[i] <= 126 ? (char)data[i] : '.';
+
+   RARCH_LOG(RARCH_SYNC_PFX "[state] %s path=%s size=%lu md5=%s head16=%s magic=\"%s\".\n",
+         scope,
+         string_is_empty(path) ? "<unknown>" : path,
+         (unsigned long)len,
+         string_is_empty(hash) ? "unknown" : hash,
+         head,
+         magic);
+}
+
+static void retroarch_sync_log_state_rfile(const char *scope,
+      const char *path, RFILE *file, const char *hash)
+{
+   uint8_t head_bytes[16];
+   int64_t pos;
+   int64_t size;
+   int64_t read_len;
+
+   if (!file || !retroarch_sync_is_state_path(path))
+      return;
+
+   size = filestream_get_size(file);
+   pos = filestream_tell(file);
+   filestream_seek(file, 0, SEEK_SET);
+   read_len = filestream_read(file, head_bytes, sizeof(head_bytes));
+   filestream_seek(file, pos, SEEK_SET);
+
+   retroarch_sync_log_state_bytes(scope, path, head_bytes,
+         read_len > 0 ? (size_t)read_len : 0, hash);
+   RARCH_LOG(RARCH_SYNC_PFX "[state] %s full-size path=%s size=%lu md5=%s.\n",
+         scope,
+         path,
+         size > 0 ? (unsigned long)size : 0,
+         string_is_empty(hash) ? "unknown" : hash);
+}
+
+static void retroarch_sync_log_option_file(const char *scope,
+      const char *path)
+{
+   void *data = NULL;
+   int64_t len = 0;
+   char *hash = NULL;
+   char *text = NULL;
+   char savestate[64];
+   char mouse_speed[64];
+   char mouse_input[64];
+
+   if (string_is_empty(path))
+      return;
+
+   if (!filestream_read_file(path, &data, &len) || !data || len <= 0)
+   {
+      RARCH_LOG(RARCH_SYNC_PFX "[state-options] %s path=%s missing.\n",
+            scope, path);
+      free(data);
+      return;
+   }
+
+   hash = retroarch_sync_manifest_fingerprint((const char*)data, (size_t)len);
+   text = (char*)calloc(1, (size_t)len + 1);
+   if (text)
+      memcpy(text, data, (size_t)len);
+
+   strlcpy(savestate, "missing", sizeof(savestate));
+   strlcpy(mouse_speed, "missing", sizeof(mouse_speed));
+   strlcpy(mouse_input, "missing", sizeof(mouse_input));
+
+   if (text)
+   {
+      char *line;
+      char *saveptr = NULL;
+      for (line = strtok_r(text, "\r\n", &saveptr);
+            line;
+            line = strtok_r(NULL, "\r\n", &saveptr))
+      {
+         char *value = strchr(line, '=');
+         if (!value)
+            continue;
+         value++;
+         while (*value == ' ' || *value == '\t' || *value == '"')
+            value++;
+         if (string_starts_with(line, "dosbox_pure_savestate"))
+         {
+            strlcpy(savestate, value, sizeof(savestate));
+            if (strchr(savestate, '"'))
+               *strchr(savestate, '"') = '\0';
+         }
+         else if (string_starts_with(line, "dosbox_pure_mouse_speed_factor"))
+         {
+            strlcpy(mouse_speed, value, sizeof(mouse_speed));
+            if (strchr(mouse_speed, '"'))
+               *strchr(mouse_speed, '"') = '\0';
+         }
+         else if (string_starts_with(line, "dosbox_pure_mouse_input"))
+         {
+            strlcpy(mouse_input, value, sizeof(mouse_input));
+            if (strchr(mouse_input, '"'))
+               *strchr(mouse_input, '"') = '\0';
+         }
+      }
+   }
+
+   RARCH_LOG(RARCH_SYNC_PFX "[state-options] %s path=%s size=%lu sha256=%s dosbox_pure_savestate=\"%s\" mouse_speed_factor=\"%s\" mouse_input=\"%s\".\n",
+         scope,
+         path,
+         (unsigned long)len,
+         string_is_empty(hash) ? "unknown" : hash,
+         savestate,
+         mouse_speed,
+         mouse_input);
+
+   free(text);
+   free(hash);
+   free(data);
+}
+
+static void retroarch_sync_log_options_snapshot(const char *scope)
+{
+   char config_dir[DIR_MAX_LENGTH];
+   char dosbox_opt[PATH_MAX_LENGTH];
+   settings_t *settings = config_get_ptr();
+
+   if (settings)
+      retroarch_sync_log_option_file(scope, settings->paths.path_core_options);
+
+   fill_pathname_application_special(config_dir,
+         sizeof(config_dir), APPLICATION_SPECIAL_DIRECTORY_CONFIG);
+   fill_pathname_join_special(dosbox_opt, config_dir,
+         "DOSBox-pure/DOSBox-pure.opt", sizeof(dosbox_opt));
+   retroarch_sync_log_option_file(scope, dosbox_opt);
+}
+
+static bool retroarch_sync_manifest_member(void *ctx,
       const char *s, size_t len)
 {
    file_list_t      *list = (file_list_t*)ctx;
@@ -363,30 +544,37 @@ static bool retroarch_sync_manifest_path_member(void *ctx,
 
    if (string_is_equal(s, "path"))
       item->type = 1;
+   else if (string_is_equal(s, "hash"))
+      item->type = 2;
    else
       item->type = 0;
    return true;
 }
 
-static bool retroarch_sync_manifest_path_string(void *ctx,
+static bool retroarch_sync_manifest_string(void *ctx,
       const char *s, size_t len)
 {
    file_list_t      *list = (file_list_t*)ctx;
    struct item_file *item = &list->list[list->size - 1];
 
    if (item->type)
-      file_list_set_alt_at_offset(list, list->size - 1, s);
+   {
+      if (item->type == 1)
+         file_list_set_alt_at_offset(list, list->size - 1, s);
+      else if (item->type == 2)
+         item->userdata = strdup(s);
+   }
    return true;
 }
 
-static bool retroarch_sync_manifest_path_start_object(void *ctx)
+static bool retroarch_sync_manifest_start_object(void *ctx)
 {
    file_list_t *list = (file_list_t*)ctx;
    file_list_append(list, NULL, NULL, 0, 0, 0);
    return true;
 }
 
-static bool retroarch_sync_manifest_path_end_object(void *ctx)
+static bool retroarch_sync_manifest_end_object(void *ctx)
 {
    file_list_t      *list = (file_list_t*)ctx;
    struct item_file *item = &list->list[list->size - 1];
@@ -398,7 +586,7 @@ static bool retroarch_sync_manifest_path_end_object(void *ctx)
    return true;
 }
 
-static file_list_t *retroarch_sync_manifest_paths(const char *data, size_t len)
+static file_list_t *retroarch_sync_manifest_parse(const char *data, size_t len)
 {
    file_list_t *list = NULL;
    rjson_t *json     = NULL;
@@ -412,11 +600,11 @@ static file_list_t *retroarch_sync_manifest_paths(const char *data, size_t len)
    }
 
    rjson_parse(json, list,
-         retroarch_sync_manifest_path_member,
-         retroarch_sync_manifest_path_string,
+         retroarch_sync_manifest_member,
+         retroarch_sync_manifest_string,
          NULL,
-         retroarch_sync_manifest_path_start_object,
-         retroarch_sync_manifest_path_end_object,
+         retroarch_sync_manifest_start_object,
+         retroarch_sync_manifest_end_object,
          NULL,
          NULL,
          NULL,
@@ -426,62 +614,72 @@ static file_list_t *retroarch_sync_manifest_paths(const char *data, size_t len)
    return list;
 }
 
-static void retroarch_sync_direct_file_cb(void *user_data,
-      const char *path, bool success, RFILE *file)
-{
-   if (file)
-      filestream_close(file);
-   if (success)
-      RARCH_LOG(RARCH_SYNC_PFX "Direct manifest download succeeded for %s.\n",
-            path);
-   else
-      RARCH_WARN(RARCH_SYNC_PFX "Direct manifest download failed for %s.\n",
-            path);
-}
-
-static void retroarch_sync_download_manifest_files(const char *data, size_t len)
+static struct item_file *retroarch_sync_manifest_find_exact(
+      file_list_t *manifest, const char *key)
 {
    size_t i;
-   file_list_t *paths = retroarch_sync_manifest_paths(data, len);
 
-   if (!paths)
-      return;
+   if (!manifest || string_is_empty(key))
+      return NULL;
 
-   for (i = 0; i < paths->size; i++)
+   for (i = 0; i < manifest->size; i++)
    {
-      const char *key = RS_FILE_KEY(&paths->list[i]);
-      const char *root = NULL;
-      const char *rel = NULL;
-      char target[PATH_MAX_LENGTH];
-      char target_dir[PATH_MAX_LENGTH];
-
-      if (string_starts_with(key, "saves/"))
-      {
-         root = dir_get_ptr(RARCH_DIR_SAVEFILE);
-         rel  = key + STRLEN_CONST("saves/");
-      }
-      else if (string_starts_with(key, "states/"))
-      {
-         root = dir_get_ptr(RARCH_DIR_SAVESTATE);
-         rel  = key + STRLEN_CONST("states/");
-      }
-      else
-         continue;
-
-      if (string_is_empty(root) || string_is_empty(rel))
-         continue;
-
-      fill_pathname_join_special(target, root, rel, sizeof(target));
-      pathname_conform_slashes_to_os(target);
-      fill_pathname_basedir(target_dir, target, sizeof(target_dir));
-      path_mkdir(target_dir);
-
-      RARCH_LOG(RARCH_SYNC_PFX "Direct manifest download %s -> %s.\n",
-            key, target);
-      retroarch_sync_read(key, target, retroarch_sync_direct_file_cb, NULL);
+      struct item_file *item = &manifest->list[i];
+      const char *item_key = RS_FILE_KEY(item);
+      if (item_key && string_is_equal(item_key, key))
+         return item;
    }
 
-   file_list_free(paths);
+   return NULL;
+}
+
+static bool retroarch_sync_manifest_set(file_list_t *manifest,
+      const char *key, const char *hash)
+{
+   size_t idx;
+   struct item_file *item;
+
+   if (!manifest || string_is_empty(key))
+      return false;
+
+   item = retroarch_sync_manifest_find_exact(manifest, key);
+   if (!item)
+   {
+      idx = manifest->size;
+      if (!file_list_append(manifest, NULL, NULL, 0, 0, 0))
+         return false;
+      file_list_set_alt_at_offset(manifest, idx, key);
+      item = &manifest->list[idx];
+   }
+
+   free(item->userdata);
+   item->userdata = hash ? strdup(hash) : NULL;
+   return hash == NULL || item->userdata != NULL;
+}
+
+static file_list_t *retroarch_sync_manifest_clone(file_list_t *manifest)
+{
+   size_t i;
+   file_list_t *clone = (file_list_t*)calloc(1, sizeof(*clone));
+
+   if (!clone)
+      return NULL;
+
+   if (manifest)
+   {
+      for (i = 0; i < manifest->size; i++)
+      {
+         struct item_file *item = &manifest->list[i];
+         if (!retroarch_sync_manifest_set(clone,
+                  RS_FILE_KEY(item), RS_FILE_HASH(item)))
+         {
+            file_list_free(clone);
+            return NULL;
+         }
+      }
+   }
+
+   return clone;
 }
 
 static void retroarch_sync_read_cb(retro_task_t *task,
@@ -533,8 +731,6 @@ static void retroarch_sync_read_cb(retro_task_t *task,
             filestream_seek(file, 0, SEEK_SET);
          }
 
-         retroarch_sync_download_manifest_files(data->data, data->len);
-
          free(fallback_version);
          free(fallback_entries);
       }
@@ -549,6 +745,9 @@ static void retroarch_sync_read_cb(retro_task_t *task,
             unsigned char *decoded = unbase64(encoded, (int)strlen(encoded), &decoded_len);
             if (decoded)
             {
+               retroarch_sync_log_state_bytes("download remote",
+                     state->path, decoded, decoded_len > 0 ? (size_t)decoded_len : 0,
+                     remote_hash);
                file = filestream_open(state->file,
                      RETRO_VFS_FILE_ACCESS_WRITE,
                      RETRO_VFS_FILE_ACCESS_HINT_NONE);
@@ -558,6 +757,8 @@ static void retroarch_sync_read_cb(retro_task_t *task,
                         == decoded_len;
                   filestream_seek(file, 0, SEEK_SET);
                }
+               if (file_success && retroarch_sync_is_state_path(state->path))
+                  retroarch_sync_log_options_snapshot("after state download");
                free(decoded);
             }
             free(encoded);
@@ -961,6 +1162,7 @@ static bool retroarch_sync_upload_write_manifest(
    rjsonwriter_t *writer;
    size_t i;
 
+   filestream_delete(path);
    *file = filestream_open(path,
          RETRO_VFS_FILE_ACCESS_READ_WRITE,
          RETRO_VFS_FILE_ACCESS_HINT_NONE);
@@ -995,7 +1197,10 @@ static bool retroarch_sync_upload_write_manifest(
       rjsonwriter_add_spaces(writer, 4);
       rjsonwriter_add_string(writer, "hash");
       rjsonwriter_raw(writer, ": ", 2);
-      rjsonwriter_add_string(writer, RS_FILE_HASH(item));
+      if (RS_FILE_HASH(item))
+         rjsonwriter_add_string(writer, RS_FILE_HASH(item));
+      else
+         rjsonwriter_raw(writer, "null", 4);
       rjsonwriter_raw(writer, "\n", 1);
       rjsonwriter_add_spaces(writer, 2);
       rjsonwriter_raw(writer, "}", 1);
@@ -1075,7 +1280,18 @@ static void retroarch_sync_upload_task_handler(retro_task_t *task)
       RFILE *manifest_file = NULL;
       state->manifest_started = true;
 
-      if (!retroarch_sync_upload_write_manifest(state->manifest,
+      if (!state->manifest_changed)
+      {
+         char msg[128];
+         snprintf(msg, sizeof(msg), "Cloud Upload complete: %u skipped",
+               state->skipped);
+         task_set_title(task, strdup(msg));
+         task_set_progress(task, 100);
+         task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+         return;
+      }
+
+      if (!retroarch_sync_upload_write_manifest(state->updated_manifest,
                state->manifest_path, &manifest_file))
       {
          state->failed++;
@@ -1120,13 +1336,120 @@ static void retroarch_sync_upload_task_cb(retro_task_t *task,
    free(state);
 }
 
+static void retroarch_sync_upload_server_manifest_cb(void *user_data,
+      const char *path, bool success, RFILE *file)
+{
+   size_t i;
+   retro_task_t *task = NULL;
+   retroarch_sync_upload_state_t *state =
+      (retroarch_sync_upload_state_t*)user_data;
+
+   (void)path;
+
+   if (!state)
+      return;
+
+   if (!success)
+   {
+      RARCH_WARN(RARCH_SYNC_PFX "Could not fetch server manifest for upload.\n");
+      if (file)
+         filestream_close(file);
+      free(state);
+      return;
+   }
+
+   if (file)
+   {
+      int len = 0;
+      char *data = retroarch_sync_read_rfile(file, &len);
+      filestream_close(file);
+      if (data)
+      {
+         state->server_manifest = retroarch_sync_manifest_parse(data, len);
+         free(data);
+      }
+   }
+
+   if (!state->server_manifest)
+      state->server_manifest = (file_list_t*)calloc(1, sizeof(*state->server_manifest));
+
+   state->updated_manifest = retroarch_sync_manifest_clone(state->server_manifest);
+   if (!state->server_manifest || !state->updated_manifest)
+   {
+      state->failed++;
+      free(state);
+      return;
+   }
+
+   if (!(task = task_init()))
+   {
+      free(state);
+      return;
+   }
+
+   for (i = 0; i < state->manifest->size; i++)
+   {
+      struct item_file *item = &state->manifest->list[i];
+      struct item_file *server_item =
+         retroarch_sync_manifest_find_exact(state->server_manifest,
+               RS_FILE_KEY(item));
+      const char *server_hash = server_item ? RS_FILE_HASH(server_item) : NULL;
+      RFILE *file_to_upload = NULL;
+
+      if (string_is_empty(RS_FILE_HASH(item)))
+      {
+         RARCH_WARN(RARCH_SYNC_PFX "Skipping \"%s\" because local hash is empty.\n",
+               RS_FILE_KEY(item));
+         state->skipped++;
+         continue;
+      }
+
+      if (server_item && server_hash && string_is_equal(server_hash, RS_FILE_HASH(item)))
+      {
+         state->skipped++;
+         continue;
+      }
+
+      file_to_upload = filestream_open(item->path,
+            RETRO_VFS_FILE_ACCESS_READ,
+            RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS);
+      if (!file_to_upload)
+      {
+         state->failed++;
+         continue;
+      }
+
+      retroarch_sync_manifest_set(state->updated_manifest,
+            RS_FILE_KEY(item), RS_FILE_HASH(item));
+      retroarch_sync_log_state_rfile("upload local",
+            RS_FILE_KEY(item), file_to_upload, RS_FILE_HASH(item));
+      if (retroarch_sync_is_state_path(RS_FILE_KEY(item)))
+         retroarch_sync_log_options_snapshot("before state upload");
+      state->manifest_changed = true;
+      state->pending++;
+      if (!retroarch_sync_update(RS_FILE_KEY(item), file_to_upload,
+               retroarch_sync_upload_file_cb, state))
+      {
+         filestream_close(file_to_upload);
+         state->pending--;
+         state->failed++;
+      }
+   }
+
+   task->state    = state;
+   task->title    = strdup("Cloud Upload in progress");
+   task->handler  = retroarch_sync_upload_task_handler;
+   task->callback = retroarch_sync_upload_task_cb;
+   task_set_progress(task, 0);
+   task_queue_push(task);
+}
+
 void retroarch_sync_upload_local_saves(void)
 {
    size_t i;
    char manifest_path[PATH_MAX_LENGTH];
    const char *path_dir_core_assets = config_get_ptr()->paths.directory_core_assets;
    retroarch_sync_upload_state_t *state = NULL;
-   retro_task_t *task = NULL;
    char *base = retroarch_sync_base_url();
    char *headers = retroarch_sync_headers(false);
 
@@ -1165,9 +1488,6 @@ void retroarch_sync_upload_local_saves(void)
          RARCH_SYNC_UPLOAD_MANIFEST, sizeof(manifest_path));
    strlcpy(state->manifest_path, manifest_path, sizeof(state->manifest_path));
 
-   if (!(task = task_init()))
-      goto error;
-
    for (i = 0; i < state->manifest->size; i++)
    {
       struct item_file *item = &state->manifest->list[i];
@@ -1175,10 +1495,21 @@ void retroarch_sync_upload_local_saves(void)
             RETRO_VFS_FILE_ACCESS_READ,
             RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS);
       char *hash;
+      int64_t size;
 
       if (!file)
       {
          state->failed++;
+         continue;
+      }
+
+      size = filestream_get_size(file);
+      if (size == 0)
+      {
+         RARCH_WARN(RARCH_SYNC_PFX "Skipping zero-byte local file \"%s\".\n",
+               RS_FILE_KEY(item));
+         filestream_close(file);
+         state->skipped++;
          continue;
       }
 
@@ -1191,24 +1522,16 @@ void retroarch_sync_upload_local_saves(void)
       }
 
       item->userdata = hash;
-      filestream_seek(file, 0, SEEK_SET);
-
-      state->pending++;
-      if (!retroarch_sync_update(RS_FILE_KEY(item), file,
-               retroarch_sync_upload_file_cb, state))
-      {
-         filestream_close(file);
-         state->pending--;
-         state->failed++;
-      }
+      retroarch_sync_log_state_rfile("local scan",
+            RS_FILE_KEY(item), file, hash);
+      filestream_close(file);
    }
 
-   task->state    = state;
-   task->title    = strdup("Cloud Upload in progress");
-   task->handler  = retroarch_sync_upload_task_handler;
-   task->callback = retroarch_sync_upload_task_cb;
-   task_set_progress(task, 0);
-   task_queue_push(task);
+   RARCH_LOG(RARCH_SYNC_PFX "Fetching server manifest before incremental upload.\n");
+   if (!retroarch_sync_read(RARCH_SYNC_MANIFEST, state->manifest_path,
+            retroarch_sync_upload_server_manifest_cb, state))
+      goto error;
+
    return;
 
 error:

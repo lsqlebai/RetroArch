@@ -5,12 +5,17 @@
  */
 
 const defaultCore = "dosbox_pure";
-const coreAssetVersion = "20260609-230008";
+const coreAssetVersion = "20260611-194950";
+const frontendAssetVersion = coreAssetVersion;
 const authApiBase = "/api/sync/v1/auth";
 var autoStart = true;
 var debugParams = new URLSearchParams(window.location.search);
 var syncParam = debugParams.get("sync");
 var disableSaveSync = debugParams.has("nosync") || syncParam === "0" || syncParam === "false";
+var syncDebugLogs = debugParams.has("syncdebug");
+var verboseRuntimeLogs = debugParams.has("verbose") ||
+   debugParams.get("log") === "verbose";
+var webDebugLogs = verboseRuntimeLogs || debugParams.has("webdebug") || syncDebugLogs;
 
 var BrowserFS = BrowserFS;
 var afs;
@@ -42,12 +47,19 @@ function setMenuItemEnabled(id, enabled) {
       item.classList.add("disabled");
       item.setAttribute("aria-disabled", "true");
    }
+   item.setAttribute("tabindex", enabled ? "0" : "-1");
 }
 
 function setSyncControlsEnabled(enabled) {
+   var actionsEnabled = enabled && !!currentGame;
    ["menuSyncNow", "menuUploadSync", "menuDownloadSync", "menuSyncConflicts"].forEach(function(id) {
-      setMenuItemEnabled(id, enabled);
+      setMenuItemEnabled(id, actionsEnabled);
    });
+}
+
+function isMenuItemDisabled(el) {
+   return !el || el.classList.contains("disabled") ||
+      el.getAttribute("aria-disabled") === "true";
 }
 
 function authRequest(path, options) {
@@ -57,6 +69,11 @@ function authRequest(path, options) {
       "Accept": "application/json",
       "Content-Type": "application/json"
    }, options.headers || {});
+   if (syncDebugLogs)
+      console.log("WEBPLAYER: sync auth request", {
+         origin: window.location.origin,
+         url: new URL(authApiBase + path, window.location.href).href
+      });
    return fetch(authApiBase + path, options).then(function(resp) {
       return resp.text().then(function(text) {
          var data = text ? JSON.parse(text) : {};
@@ -125,6 +142,28 @@ function modulePreRun(module) {
    module.ENV["LIBRARY_PATH"] = module.corePath;
 }
 
+function shouldLogRuntimeLine(text) {
+   if (verboseRuntimeLogs)
+      return true;
+   return /\[(ERROR|WARN)\]/.test(text) ||
+      /\[State\]/.test(text) ||
+      /Load State Error|Failed to load state|Failed to save state/.test(text);
+}
+
+function webDebugLog() {
+   if (webDebugLogs)
+      console.log.apply(console, arguments);
+}
+
+function retroArchArgs(content) {
+   var args = [];
+   if (verboseRuntimeLogs)
+      args.push("-v");
+   args.push(content || "--menu");
+   args.push("-c", "/home/web_user/retroarch/userdata/retroarch.cfg");
+   return args;
+}
+
 var ModuleBase = {
    noInitialRun: true,
    retroArchSend: function(msg) {
@@ -140,10 +179,12 @@ var ModuleBase = {
       appInitialized();
    },
    print: function(text) {
-      console.log("stdout:", text);
+      if (shouldLogRuntimeLine(text))
+         console.log("stdout:", text);
    },
    printErr: function(text) {
-      console.log("stderr:", text);
+      if (shouldLogRuntimeLine(text))
+         console.log("stderr:", text);
    },
    canvas: canvas
 };
@@ -184,7 +225,7 @@ function idbfsInit() {
                         console.error("WEBPLAYER: error: " + e + " falling back to in-memory filesystem");
                         appInitialized();
                      } else {
-                        console.log("WEBPLAYER: idbfs setup successful");
+                        webDebugLog("WEBPLAYER: idbfs setup successful");
                         appInitialized();
                      }
                   });
@@ -199,12 +240,15 @@ function zipfsInit() {
    let buffer = new ArrayBuffer(256 * 1024 * 1024);
    let bufferView = new Uint8Array(buffer);
    let idx = 0;
+   let frontendAssetUrl = function(path) {
+      return path + "?v=" + frontendAssetVersion;
+   };
    // bundle should be in five parts (this can be changed later)
-   Promise.all([fetch("assets/frontend/bundle.zip.aa"),
-      fetch("assets/frontend/bundle.zip.ab"),
-      fetch("assets/frontend/bundle.zip.ac"),
-      fetch("assets/frontend/bundle.zip.ad"),
-      fetch("assets/frontend/bundle.zip.ae")
+   Promise.all([fetch(frontendAssetUrl("assets/frontend/bundle.zip.aa")),
+      fetch(frontendAssetUrl("assets/frontend/bundle.zip.ab")),
+      fetch(frontendAssetUrl("assets/frontend/bundle.zip.ac")),
+      fetch(frontendAssetUrl("assets/frontend/bundle.zip.ad")),
+      fetch(frontendAssetUrl("assets/frontend/bundle.zip.ae"))
    ]).then(function(resps) {
       Promise.all(resps.map((r) => r.arrayBuffer())).then(function(buffers) {
          for (let buf of buffers) {
@@ -216,7 +260,7 @@ function zipfsInit() {
          }
          BrowserFS.FileSystem.ZipFS.computeIndex(BrowserFS.BFSRequire('buffer').Buffer(new Uint8Array(buffer, 0, idx)), function(toc) {
             zipTOC = toc;
-            console.log("WEBPLAYER: zipfs setup successful");
+            webDebugLog("WEBPLAYER: zipfs setup successful");
             appInitialized();
          });
       })
@@ -227,7 +271,7 @@ function appInitialized() {
    /* Need to wait for the file system, the wasm runtime, and the zip download
       to complete before enabling the Run button. */
    initializationCount++;
-   console.log("WEBPLAYER: appInitialized", {
+   webDebugLog("WEBPLAYER: appInitialized", {
       count: initializationCount,
       hasModule: !!Module,
       hasCallMain: !!(Module && Module.callMain)
@@ -250,7 +294,7 @@ function appInitialized() {
 
 function callRetroArchMain(reason) {
    var args = (Module && Module.arguments) || ModuleBase.arguments || [];
-   console.log("WEBPLAYER: callMain requested", {
+   webDebugLog("WEBPLAYER: callMain requested", {
       reason: reason,
       hasModule: !!Module,
       hasCallMain: !!(Module && Module.callMain),
@@ -262,8 +306,9 @@ function callRetroArchMain(reason) {
       return;
    }
    try {
+      clearWebMouseOverrides();
       Module.callMain(args);
-      console.log("WEBPLAYER: callMain returned", {
+      webDebugLog("WEBPLAYER: callMain returned", {
          reason: reason
       });
    } catch (e) {
@@ -305,6 +350,7 @@ function initSaveSync(game) {
       Module: Module,
       userId: currentUser.userId,
       gameId: game ? game.gameId : "default",
+      stateBaseName: game ? cloudGameBaseName(game) : null,
       basePath: "/home/web_user/retroarch/userdata",
       dirs: ["saves", "states"],
       apiBase: "/api/sync/v1"
@@ -343,16 +389,70 @@ function cloudGameLabel(game) {
    return cloudGameBaseName(game) + "-" + shortCloudHash(game.contentHash || game.gameId);
 }
 
+function contentBaseName(path) {
+   var name = path || "";
+   var hash = name.indexOf("#");
+   if (hash >= 0)
+      name = name.slice(0, hash);
+   var query = name.indexOf("?");
+   if (query >= 0)
+      name = name.slice(0, query);
+   try {
+      name = decodeURIComponent(name);
+   } catch (e) {
+   }
+   var slash = Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\"));
+   if (slash >= 0)
+      name = name.slice(slash + 1);
+   return name.replace(/\.[^.]+$/, "");
+}
+
+function rememberCloudGame(game, reason) {
+   if (!game || !game.gameId)
+      return false;
+   currentGame = game;
+   localStorage.setItem("gameId", game.gameId);
+   localStorage.setItem("lastGameId", game.gameId);
+   webDebugLog("WEBPLAYER: remembered cloud game", {
+      reason: reason || "unknown",
+      game: game
+   });
+   updateCloudGameUi();
+   return true;
+}
+
+function findCloudGameForContent(content) {
+   var games = cloudGamesCache || [];
+   var baseName = contentBaseName(content);
+   if (!baseName)
+      return null;
+   for (var i = 0; i < games.length; i++)
+   {
+      var game = games[i];
+      if (cloudGameBaseName(game) === baseName ||
+            contentBaseName(game && game.contentUrl) === baseName ||
+            contentBaseName(game && game.fileName) === baseName)
+         return game;
+   }
+   return null;
+}
+
 function updateCloudGameUi() {
    var item = document.getElementById("menuCloudGame");
    if (item)
       item.textContent = "Game: " + cloudGameLabel(currentGame);
+   setSyncControlsEnabled(!!currentUser && !disableSaveSync);
    renderCloudGameMenu(cloudGamesCache || []);
 }
 
 function fetchCloudGames(force) {
    if (cloudGamesCache && !force)
       return Promise.resolve(cloudGamesCache);
+   if (syncDebugLogs)
+      console.log("WEBPLAYER: sync games request", {
+         origin: window.location.origin,
+         url: new URL("/api/sync/v1/games", window.location.href).href
+      });
    return fetch("/api/sync/v1/games").then(function(resp) {
       if (!resp.ok)
          throw new Error("games API returned HTTP " + resp.status);
@@ -401,15 +501,13 @@ function renderCloudGameMenu(games) {
 
 function discoverCurrentGame() {
    return fetchCloudGames(false).then(function(games) {
-      var storedGameId = localStorage.getItem("gameId");
+      var storedGameId = localStorage.getItem("gameId") ||
+         localStorage.getItem("lastGameId");
       var game = games.find(function(item) {
          return item.gameId === storedGameId;
       }) || null;
       if (game)
-      {
-         localStorage.setItem("gameId", game.gameId);
-         console.log("WEBPLAYER: selected cloud game", game);
-      }
+         rememberCloudGame(game, "restore");
       updateCloudGameUi();
       return game;
    }).catch(function(e) {
@@ -422,7 +520,7 @@ function discoverCurrentGame() {
 function selectCloudGame(game) {
    currentGame = game || null;
    if (currentGame)
-      localStorage.setItem("gameId", currentGame.gameId);
+      rememberCloudGame(currentGame, "select");
    updateCloudGameUi();
    if (!currentUser || disableSaveSync || !window.RetroArchSaveSync)
       return Promise.resolve(currentGame);
@@ -450,13 +548,13 @@ function preLoadingComplete() {
 }
 
 function mountBrowserFS() {
-   console.log("WEBPLAYER: mountBrowserFS called", {
+   webDebugLog("WEBPLAYER: mountBrowserFS called", {
       hasModuleFS: !!(Module && Module.FS),
       hasModulePATH: !!(Module && Module.PATH),
       hasModuleErrno: !!(Module && Module.ERRNO_CODES)
    });
    var BFS = new BrowserFS.EmscriptenFS(Module.FS, Module.PATH, Module.ERRNO_CODES);
-   console.log("WEBPLAYER: created EmscriptenFS", BFS);
+   webDebugLog("WEBPLAYER: created EmscriptenFS", BFS);
    Module.FS.mount(BFS, {
       root: '/home'
    }, '/home');
@@ -482,9 +580,23 @@ function upsertConfigValue(text, key, value) {
    return text + line + "\n";
 }
 
+function writeTextFileTruncated(path, text) {
+   try {
+      Module.FS.unlink(path);
+   } catch (e) {}
+   Module.FS.writeFile(path, text);
+}
+
+function cleanCoreOptionsText(text) {
+   return (text || "").split(/\r?\n/).filter(function(line) {
+      var trimmed = line.trim();
+      return !trimmed || trimmed[0] === "#" || trimmed.indexOf("=") >= 0;
+   }).join("\n").replace(/\n*$/, "\n");
+}
+
 function clearWebMouseOverrides() {
    restoreRetroArchWebDefaultMouseOptions();
-   restoreDosboxPureDefaultMouseOptions();
+   restoreDosboxPureWebOptions();
 }
 
 function hideCanvasCursor() {
@@ -524,26 +636,47 @@ function restoreRetroArchWebDefaultMouseOptions() {
    if (autoGrab && autoGrab[1] === "true")
       next = upsertConfigValue(next, "input_auto_mouse_grab", "false");
 
+   var stateCompression = next.match(/^savestate_file_compression\s*=\s*"([^"]*)"/m);
+   if (!stateCompression || stateCompression[1] !== "true")
+      next = upsertConfigValue(next, "savestate_file_compression", "true");
+
    if (next !== text) {
-      Module.FS.writeFile(path, next);
-      console.log("WEBPLAYER: restored web default mouse auto grab setting");
+      writeTextFileTruncated(path, next);
+      webDebugLog("WEBPLAYER: ensured RetroArch web options", {
+         path: path,
+         inputAutoMouseGrab: "false",
+         savestateFileCompression: "true"
+      });
    }
 }
 
-function restoreDosboxPureDefaultMouseOptions() {
+function restoreDosboxPureWebOptions() {
    [
       "/home/web_user/retroarch/userdata/retroarch-core-options.cfg",
       "/home/web_user/retroarch/userdata/config/DOSBox-pure/DOSBox-pure.opt"
-   ].forEach(restoreDosboxPureMouseOptionsFile);
+   ].concat(listDosboxPureOptionFiles()).forEach(restoreDosboxPureWebOptionsFile);
 }
 
-function restoreDosboxPureMouseOptionsFile(path) {
+function listDosboxPureOptionFiles() {
+   var dir = "/home/web_user/retroarch/userdata/config/DOSBox-pure";
+   try {
+      return Module.FS.readdir(dir).filter(function(name) {
+         return name !== "." && name !== ".." && /\.opt$/.test(name);
+      }).map(function(name) {
+         return dir + "/" + name;
+      });
+   } catch (e) {
+      return [];
+   }
+}
+
+function restoreDosboxPureWebOptionsFile(path) {
    var text = "";
    try {
       text = Module.FS.readFile(path, {encoding: "utf8"});
    } catch (e) {}
 
-   var next = text;
+   var next = cleanCoreOptionsText(text);
    var mouseInput = text.match(/^dosbox_pure_mouse_input\s*=\s*"([^"]*)"/m);
    if (mouseInput && mouseInput[1] === "direct")
       next = upsertConfigValue(next, "dosbox_pure_mouse_input", "true");
@@ -552,15 +685,27 @@ function restoreDosboxPureMouseOptionsFile(path) {
    if (!mouseSpeed || mouseSpeed[1] !== "2.0")
       next = upsertConfigValue(next, "dosbox_pure_mouse_speed_factor", "2.0");
 
+   var savestate = next.match(/^dosbox_pure_savestate\s*=\s*"([^"]*)"/m);
+   if (!savestate || savestate[1] !== "on")
+      next = upsertConfigValue(next, "dosbox_pure_savestate", "on");
+
    if (next !== text) {
       var parent = path.slice(0, path.lastIndexOf("/"));
       ensureDirectory(parent);
-      Module.FS.writeFile(path, next);
-      console.log("WEBPLAYER: ensured DOSBox Pure mouse options", {
+      writeTextFileTruncated(path, next);
+      webDebugLog("WEBPLAYER: ensured DOSBox Pure web options", {
          path: path,
-         speed: "2.0"
+         speed: "2.0",
+         savestate: "on"
       });
    }
+
+   try {
+      webDebugLog("WEBPLAYER: DOSBox Pure web options active", {
+         path: path,
+         content: Module.FS.readFile(path, {encoding: "utf8"})
+      });
+   } catch (e) {}
 }
 
 function setupFileSystem() {
@@ -586,14 +731,14 @@ function setupFileSystem() {
    BrowserFS.initialize(mfs);
    mountBrowserFS();
 
-   console.log("WEBPLAYER: filesystem initialization successful");
+   webDebugLog("WEBPLAYER: filesystem initialization successful");
 }
 
 function startRetroArch() {
    $('.webplayer').show();
    $('.webplayer-preview').hide();
    document.getElementById("btnRun").disabled = true;
-   console.log("WEBPLAYER: starting RetroArch", {
+   webDebugLog("WEBPLAYER: starting RetroArch", {
       args: (Module && Module.arguments) || ModuleBase.arguments,
       hasCallMain: !!(Module && Module.callMain),
       corePath: ModuleBase.corePath
@@ -810,6 +955,8 @@ $(function() {
 
    $('#menuSyncNow').click(function(e) {
       e.preventDefault();
+      if (isMenuItemDisabled(this))
+         return;
       runManualSyncAction("sync", "#icnMenuSync", "sync", function() {
          return window.RetroArchSaveSync.syncNow();
       });
@@ -817,6 +964,8 @@ $(function() {
 
    $('#menuUploadSync').click(function(e) {
       e.preventDefault();
+      if (isMenuItemDisabled(this))
+         return;
       runManualSyncAction("upload", "#icnMenuUploadSync", "upload", function() {
          return window.RetroArchSaveSync.uploadNow();
       });
@@ -824,6 +973,8 @@ $(function() {
 
    $('#menuDownloadSync').click(function(e) {
       e.preventDefault();
+      if (isMenuItemDisabled(this))
+         return;
       console.log("WEBPLAYER: Use Cloud clicked", {
          hasSaveSync: !!window.RetroArchSaveSync
       });
@@ -862,6 +1013,8 @@ $(function() {
 
    $('#menuSyncConflicts').click(function(e) {
       e.preventDefault();
+      if (isMenuItemDisabled(this))
+         return;
       if (!currentUser || disableSaveSync)
          return;
       $('#syncModal').modal('show');
@@ -1043,7 +1196,7 @@ function loadCore(core, args) {
    $('#dropdownMenu1').text(coreTitle);
 
    var wasmUrl = "./" + core + "_libretro.wasm?v=" + coreAssetVersion;
-   ModuleBase.arguments = args || ["-v", "--menu", "-c", "/home/web_user/retroarch/userdata/retroarch.cfg"];
+   ModuleBase.arguments = args || retroArchArgs("--menu");
    ModuleBase.preRun = [modulePreRun];
    ModuleBase.canvas = canvas;
    ModuleBase.corePath = "/home/web_user/retroarch/cores/" + core + "_libretro.core";
@@ -1054,7 +1207,7 @@ function loadCore(core, args) {
    };
 
    // Load the Core's related JavaScript.
-   console.log("WEBPLAYER: loading core", {
+   webDebugLog("WEBPLAYER: loading core", {
       core: core,
       js: "./" + core + "_libretro.js?v=" + coreAssetVersion,
       wasm: wasmUrl,
@@ -1084,11 +1237,26 @@ function relaunch(core, content) {
    if (!core) core = ModuleBase.corePath;
 
    if (!content) content = "--menu";
-   console.log("WEBPLAYER: relaunch requested", {
+   webDebugLog("WEBPLAYER: relaunch requested", {
       core: core,
       content: content,
       currentModuleBaseCorePath: ModuleBase.corePath
    });
+
+   if (content && content !== "--menu")
+   {
+      var launchedGame = findCloudGameForContent(content);
+      if (launchedGame)
+         rememberCloudGame(launchedGame, "launch");
+      else if (currentUser)
+         fetchCloudGames(false).then(function() {
+            var game = findCloudGameForContent(content);
+            if (game)
+               rememberCloudGame(game, "launch");
+         }).catch(function(e) {
+            console.warn("WEBPLAYER: failed to remember launched game", e);
+         });
+   }
 
    Module = null;
    if (reloadTimeout) {
@@ -1100,5 +1268,5 @@ function relaunch(core, content) {
    currentCore = core.slice(0, -14).split("/").slice(-1)[0];
 
    localStorage.setItem("core", currentCore);
-   loadCore(currentCore, ["-v", content, "-c", "/home/web_user/retroarch/userdata/retroarch.cfg"]);
+   loadCore(currentCore, retroArchArgs(content));
 }

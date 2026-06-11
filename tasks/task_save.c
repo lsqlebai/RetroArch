@@ -26,6 +26,7 @@
 #include <streams/rzip_stream.h>
 #include <rthreads/rthreads.h>
 #include <file/file_path.h>
+#include <lrc_hash.h>
 #include <retro_miscellaneous.h>
 #include <string/stdstring.h>
 #include <time/rtime.h>
@@ -72,6 +73,72 @@
 #define RASTATE_CHEEVOS_BLOCK "ACHV"
 #define RASTATE_REPLAY_BLOCK "RPLY"
 #define RASTATE_END_BLOCK "END "
+
+static void task_state_head_hex(char *out, size_t out_size,
+      const void *data, size_t len)
+{
+   size_t i;
+   size_t max_len = MIN(len, (size_t)16);
+   const uint8_t *bytes = (const uint8_t*)data;
+
+   if (!out_size)
+      return;
+
+   out[0] = '\0';
+   if (!data)
+      return;
+
+   for (i = 0; i < max_len; i++)
+   {
+      char part[4];
+      snprintf(part, sizeof(part), "%02x", bytes[i]);
+      strlcat(out, part, out_size);
+      if (i + 1 < max_len)
+         strlcat(out, " ", out_size);
+   }
+}
+
+static void task_state_log_file_info(const char *scope,
+      const char *path, const void *data, size_t len)
+{
+   MD5_CTX md5;
+   unsigned char digest[16];
+   char hash[33];
+   char head[64];
+   char magic[9];
+   size_t magic_len = MIN(len, (size_t)8);
+
+   task_state_head_hex(head, sizeof(head), data, len);
+   hash[0] = '\0';
+   if (data)
+   {
+      MD5_Init(&md5);
+      MD5_Update(&md5, data, len);
+      MD5_Final(digest, &md5);
+      snprintf(hash, sizeof(hash),
+            "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+            digest[0], digest[1], digest[2], digest[3],
+            digest[4], digest[5], digest[6], digest[7],
+            digest[8], digest[9], digest[10], digest[11],
+            digest[12], digest[13], digest[14], digest[15]);
+   }
+   memset(magic, 0, sizeof(magic));
+   if (data && magic_len)
+   {
+      size_t i;
+      const uint8_t *bytes = (const uint8_t*)data;
+      for (i = 0; i < magic_len; i++)
+         magic[i] = bytes[i] >= 32 && bytes[i] <= 126 ? (char)bytes[i] : '.';
+   }
+
+   RARCH_LOG("[State][debug] %s path=\"%s\" size=%lu md5=%s head16=%s magic=\"%s\".\n",
+         scope,
+         string_is_empty(path) ? "<unknown>" : path,
+         (unsigned long)len,
+         string_is_empty(hash) ? "unknown" : hash,
+         head,
+         magic);
+}
 
 struct save_state_buf
 {
@@ -586,16 +653,18 @@ static void task_save_handler(retro_task_t *task)
          msg = strdup(new_msg);
       }
 
-      if (!((flg & RETRO_TASK_FLG_MUTE) > 0) && msg)
-      {
-         task_set_title(task, msg);
-         msg = NULL;
-      }
+	      if (!((flg & RETRO_TASK_FLG_MUTE) > 0) && msg)
+	      {
+	         task_set_title(task, msg);
+	         msg = NULL;
+	      }
 
-      task_save_handler_finished(task, state);
+	      task_state_log_file_info("save complete",
+	            state->path, state->data, state->size);
+	      task_save_handler_finished(task, state);
 
-      if (!string_is_empty(msg))
-         free(msg);
+	      if (!string_is_empty(msg))
+	         free(msg);
    }
 }
 
@@ -806,10 +875,12 @@ static void task_load_handler(retro_task_t *task)
          }
 
          task_set_title(task, strdup(msg));
-      }
+	      }
 
-      task_load_handler_finished(task, state);
-   }
+	      task_state_log_file_info("load complete before deserialize",
+	            state->path, state->data, state->size);
+	      task_load_handler_finished(task, state);
+	   }
 
    return;
 
@@ -852,6 +923,8 @@ static bool content_load_rastate1(unsigned char* input, size_t len)
          retro_ctx_serialize_info_t serial_info;
          serial_info.data_const = (void*)input;
          serial_info.size       = block_size;
+         task_state_log_file_info("rastate MEM block before core_unserialize",
+               "RASTATE", input, block_size);
 #ifdef HAVE_BSV_MOVIE
          {
             input_driver_state_t *input_st = input_state_get_ptr();
