@@ -722,7 +722,7 @@ static void retroarch_sync_read_cb(retro_task_t *task,
                version, entries);
 
          file = filestream_open(state->file,
-               RETRO_VFS_FILE_ACCESS_WRITE,
+               RETRO_VFS_FILE_ACCESS_READ_WRITE,
                RETRO_VFS_FILE_ACCESS_HINT_NONE);
          if (file)
          {
@@ -749,7 +749,7 @@ static void retroarch_sync_read_cb(retro_task_t *task,
                      state->path, decoded, decoded_len > 0 ? (size_t)decoded_len : 0,
                      remote_hash);
                file = filestream_open(state->file,
-                     RETRO_VFS_FILE_ACCESS_WRITE,
+                     RETRO_VFS_FILE_ACCESS_READ_WRITE,
                      RETRO_VFS_FILE_ACCESS_HINT_NONE);
                if (file)
                {

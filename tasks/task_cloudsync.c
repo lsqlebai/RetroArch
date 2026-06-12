@@ -150,12 +150,38 @@ static file_list_t *task_cloud_sync_create_manifest(RFILE *file)
 {
    file_list_t  *list = NULL;
    rjson_t      *json = NULL;
+   int64_t       size = 0;
+   char         *data = NULL;
 
    if (!(list = (file_list_t *)calloc(1, sizeof(file_list_t))))
       return NULL;
 
-   if (!(json = rjson_open_rfile(file)))
+   filestream_seek(file, 0, SEEK_SET);
+   size = filestream_get_size(file);
+   if (size < 0)
    {
+      free(list);
+      return NULL;
+   }
+
+   data = (char*)malloc((size_t)size + 1);
+   if (!data)
+   {
+      free(list);
+      return NULL;
+   }
+
+   if (size && filestream_read(file, data, size) != size)
+   {
+      free(data);
+      free(list);
+      return NULL;
+   }
+   data[size] = '\0';
+
+   if (!(json = rjson_open_buffer(data, (size_t)size)))
+   {
+      free(data);
       free(list);
       return NULL;
    }
@@ -171,7 +197,14 @@ static file_list_t *task_cloud_sync_create_manifest(RFILE *file)
                NULL,
                NULL);
 
+   if (!string_is_empty(rjson_get_error(json)))
+      RARCH_WARN(CSPFX "Manifest parse error at line %lu column %lu: %s.\n",
+            (unsigned long)rjson_get_source_line(json),
+            (unsigned long)rjson_get_source_column(json),
+            rjson_get_error(json));
+
    rjson_free(json);
+   free(data);
 
    file_list_sort_on_alt(list);
 
@@ -302,6 +335,8 @@ static void task_cloud_sync_manifest_append_dir(file_list_t *manifest,
    fill_pathname_slash(dir_fullpath_slash, sizeof(dir_fullpath_slash));
 
    dir_list = dir_list_new(dir_fullpath_slash, NULL, false, true, true, true);
+   if (!dir_list)
+      return;
 
    if (dir_list->size == 0)
    {
@@ -345,48 +380,59 @@ static void task_cloud_sync_manifest_append_dir(file_list_t *manifest,
  */
 static struct string_list *task_cloud_sync_directory_map(void)
 {
-   static struct string_list *list = NULL;
    settings_t *settings = config_get_ptr();
+   union string_list_elem_attr attr = {0};
+   struct string_list *list = string_list_new();
+   char dir[DIR_MAX_LENGTH];
 
    if (!list)
+      return NULL;
+
+   if (settings->bools.cloud_sync_sync_configs)
    {
-      union string_list_elem_attr attr = {0};
-      char  dir[DIR_MAX_LENGTH];
-      list = string_list_new();
-
-      if (settings->bools.cloud_sync_sync_configs)
-      {
-         string_list_append(list, "config", attr);
-         fill_pathname_application_special(dir,
-               sizeof(dir), APPLICATION_SPECIAL_DIRECTORY_CONFIG);
-         list->elems[list->size - 1].userdata = strdup(dir);
-      }
-
-      if (settings->bools.cloud_sync_sync_saves)
-      {
-         string_list_append(list, "saves", attr);
-         list->elems[list->size - 1].userdata = strdup(dir_get_ptr(RARCH_DIR_SAVEFILE));
-
-         string_list_append(list, "states", attr);
-         list->elems[list->size - 1].userdata = strdup(dir_get_ptr(RARCH_DIR_SAVESTATE));
-      }
-
-      if (settings->bools.cloud_sync_sync_thumbs)
-      {
-         string_list_append(list, "thumbnails", attr);
-         strlcpy(dir, settings->paths.directory_thumbnails, sizeof(dir));
-         list->elems[list->size - 1].userdata = strdup(dir);
-      }
-
-      if (settings->bools.cloud_sync_sync_system)
-      {
-         string_list_append(list, "system", attr);
-         strlcpy(dir, settings->paths.directory_system, sizeof(dir));
-         list->elems[list->size - 1].userdata = strdup(dir);
-      }
+      string_list_append(list, "config", attr);
+      fill_pathname_application_special(dir,
+            sizeof(dir), APPLICATION_SPECIAL_DIRECTORY_CONFIG);
+      list->elems[list->size - 1].userdata = strdup(dir);
    }
 
+   if (settings->bools.cloud_sync_sync_saves)
+   {
+      string_list_append(list, "saves", attr);
+      list->elems[list->size - 1].userdata = strdup(dir_get_ptr(RARCH_DIR_SAVEFILE));
+
+      string_list_append(list, "states", attr);
+      list->elems[list->size - 1].userdata = strdup(dir_get_ptr(RARCH_DIR_SAVESTATE));
+   }
+
+   if (settings->bools.cloud_sync_sync_thumbs)
+   {
+      string_list_append(list, "thumbnails", attr);
+      strlcpy(dir, settings->paths.directory_thumbnails, sizeof(dir));
+      list->elems[list->size - 1].userdata = strdup(dir);
+   }
+
+   if (settings->bools.cloud_sync_sync_system)
+   {
+      string_list_append(list, "system", attr);
+      strlcpy(dir, settings->paths.directory_system, sizeof(dir));
+      list->elems[list->size - 1].userdata = strdup(dir);
+   }
+
+   RARCH_LOG(CSPFX "Directory map has %lu roots: saves=%s states=%s.\n",
+         (unsigned long)list->size,
+         dir_get_ptr(RARCH_DIR_SAVEFILE),
+         dir_get_ptr(RARCH_DIR_SAVESTATE));
+
    return list;
+}
+
+static void task_cloud_sync_directory_map_free(struct string_list *list)
+{
+   if (!list)
+      return;
+
+   string_list_free(list);
 }
 
 /**
@@ -418,11 +464,15 @@ static void task_cloud_sync_build_current_manifest(task_cloud_sync_state_t *sync
       return;
    }
 
-   /* The userdata of the elements is actually the full path to the directory, while data is the name of the folder itself */
-   /* The paths iterated here are not portable, because they are still used for iterating later on */
-   for (i = 0; i < dirlist->size; i++)
-      task_cloud_sync_manifest_append_dir(sync_state->current_manifest,
-            (const char*)dirlist->elems[i].userdata, dirlist->elems[i].data);
+   if (dirlist)
+   {
+      /* The userdata of the elements is actually the full path to the directory, while data is the name of the folder itself */
+      /* The paths iterated here are not portable, because they are still used for iterating later on */
+      for (i = 0; i < dirlist->size; i++)
+         task_cloud_sync_manifest_append_dir(sync_state->current_manifest,
+               (const char*)dirlist->elems[i].userdata, dirlist->elems[i].data);
+      task_cloud_sync_directory_map_free(dirlist);
+   }
 
    file_list_sort_on_alt(sync_state->current_manifest);
    sync_state->phase = CLOUD_SYNC_PHASE_DIFF;
@@ -634,7 +684,7 @@ static void task_cloud_sync_fetch_server_file(task_cloud_sync_state_t *sync_stat
    RARCH_LOG(CSPFX "Fetching %s.\n", key);
 
    filename[0] = '\0';
-   for (i = 0; i < dirlist->size; i++)
+   for (i = 0; dirlist && i < dirlist->size; i++)
    {
       if (!string_starts_with(key, dirlist->elems[i].data))
          continue;
@@ -644,6 +694,7 @@ static void task_cloud_sync_fetch_server_file(task_cloud_sync_state_t *sync_stat
       pathname_conform_slashes_to_os(filename);
       break;
    }
+   task_cloud_sync_directory_map_free(dirlist);
    if (string_is_empty(filename))
    {
       /* how did this end up here? we don't know where to put it... */
@@ -936,7 +987,7 @@ static void task_cloud_sync_maybe_ignore(task_cloud_sync_state_t *sync_state)
       {
          struct item_file *local_file  = &sync_state->local_manifest->list[sync_state->local_idx];
          const char *key = CS_FILE_KEY(local_file);
-         for (i = 0; !found && i < dirlist->size; i++)
+         for (i = 0; dirlist && !found && i < dirlist->size; i++)
             found = string_starts_with(key, dirlist->elems[i].data);
          /* we have a record of doing a sync for this file but now no longer
           * wish to sync it. keep the record? might as well, in case the option
@@ -955,7 +1006,7 @@ static void task_cloud_sync_maybe_ignore(task_cloud_sync_state_t *sync_state)
       {
          struct item_file *server_file  = &sync_state->server_manifest->list[sync_state->server_idx];
          const char *key = CS_FILE_KEY(server_file);
-         for (i = 0; !found && i < dirlist->size; i++)
+         for (i = 0; dirlist && !found && i < dirlist->size; i++)
             found = string_starts_with(key, dirlist->elems[i].data);
          /* must keep the server's manifest complete */
          if (!found)
@@ -965,6 +1016,7 @@ static void task_cloud_sync_maybe_ignore(task_cloud_sync_state_t *sync_state)
          }
       }
    }
+   task_cloud_sync_directory_map_free(dirlist);
 }
 
 static void task_cloud_sync_diff_next(task_cloud_sync_state_t *sync_state)
