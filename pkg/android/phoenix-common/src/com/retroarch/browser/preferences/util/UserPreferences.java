@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -26,6 +27,9 @@ public final class UserPreferences
 	private static final String TAG = "UserPreferences";
 	private static final String CLOUD_SYNC_MIGRATION_KEY = "android_cloud_sync_migration_version";
 	private static final int CLOUD_SYNC_MIGRATION_VERSION = 3;
+	private static final String BUNDLED_DOSBOX_CORE = "dosbox_pure_libretro_android.so";
+	private static final String BUNDLED_DOSBOX_CORE_VERSION = "20260612-state-align";
+	private static final String BUNDLED_DOSBOX_CORE_PREF_KEY = "bundled_dosbox_pure_core_version";
 
 	// Disallow explicit instantiation.
 	private UserPreferences()
@@ -136,6 +140,7 @@ public final class UserPreferences
 		final SharedPreferences prefs = getPreferences(ctx);
 
 		config.setString("libretro_directory", coreDir);
+		installBundledDosboxCore(ctx, coreDir);
 
 		int samplingRate = getOptimalSamplingRate(ctx);
 		if (samplingRate != -1) {
@@ -276,6 +281,53 @@ public final class UserPreferences
 		return new File(assetsPath, "pkg/chinese-fallback-font.ttf").isFile()
 				&& new File(assetsPath, "glui/main_tab_passive.png").isFile()
 				&& new File(assetsPath, "glui/font.ttf").isFile();
+	}
+
+	private static void installBundledDosboxCore(Context ctx, String coreDirPath)
+	{
+		SharedPreferences prefs = getPreferences(ctx);
+		File coreDir = new File(coreDirPath);
+		File output = new File(coreDir, BUNDLED_DOSBOX_CORE);
+		String installedVersion = prefs.getString(BUNDLED_DOSBOX_CORE_PREF_KEY, "");
+
+		if (BUNDLED_DOSBOX_CORE_VERSION.equals(installedVersion) && output.isFile())
+			return;
+
+		if (!coreDir.mkdirs() && !coreDir.isDirectory())
+		{
+			Log.e(TAG, "Failed to create core directory: " + coreDirPath);
+			return;
+		}
+
+		String[] abis = Build.VERSION.SDK_INT >= 21
+				? Build.SUPPORTED_ABIS
+				: new String[] { Build.CPU_ABI, Build.CPU_ABI2 };
+		byte[] buffer = new byte[1024 * 64];
+
+		for (String abi : abis)
+		{
+			if (abi == null || abi.length() == 0)
+				continue;
+
+			String assetPath = "bundled-cores/" + abi + "/" + BUNDLED_DOSBOX_CORE;
+			try (InputStream in = ctx.getAssets().open(assetPath);
+				 FileOutputStream out = new FileOutputStream(output))
+			{
+				int read;
+				while ((read = in.read(buffer)) != -1)
+					out.write(buffer, 0, read);
+
+				prefs.edit().putString(BUNDLED_DOSBOX_CORE_PREF_KEY, BUNDLED_DOSBOX_CORE_VERSION).apply();
+				Log.i(TAG, "Installed bundled DOSBox Pure core from asset: " + assetPath);
+				return;
+			}
+			catch (IOException e)
+			{
+				Log.i(TAG, "Bundled DOSBox Pure core unavailable for ABI " + abi + ": " + assetPath);
+			}
+		}
+
+		Log.e(TAG, "No bundled DOSBox Pure core asset matched device ABI.");
 	}
 
 	private static boolean extractBundledAssets(String apkPath, String assetsPath)

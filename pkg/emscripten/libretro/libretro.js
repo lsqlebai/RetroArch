@@ -5,7 +5,7 @@
  */
 
 const defaultCore = "dosbox_pure";
-const coreAssetVersion = "20260611-201520";
+const coreAssetVersion = "20260612-serialize-trace";
 const frontendAssetVersion = coreAssetVersion;
 const authApiBase = "/api/sync/v1/auth";
 var autoStart = true;

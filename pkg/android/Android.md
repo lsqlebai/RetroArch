@@ -74,6 +74,37 @@ Minimum files observed to matter for the current GLUI startup check:
 - `glui/main_tab_passive.png`
 - `glui/font.ttf`
 
+## Bundled DOSBox Pure Core
+
+The normal debug APK is ARM-only and bundles the verified DOSBox Pure core as
+APK assets under:
+
+```text
+pkg/android/phoenix/assets/bundled-cores/<abi>/dosbox_pure_libretro_android.so
+```
+
+`UserPreferences.updateConfigFile()` installs the matching ABI asset to:
+
+```text
+/data/user/0/com.retroarch/cores/dosbox_pure_libretro_android.so
+```
+
+This makes fresh APK installs usable on devices without adb sideloading a core.
+When replacing the bundled core, update `BUNDLED_DOSBOX_CORE_VERSION` in:
+
+```text
+pkg/android/phoenix-common/src/com/retroarch/browser/preferences/util/UserPreferences.java
+```
+
+Latest packaged state-aligned core md5 values:
+
+- `arm64-v8a`: `7af19567415593d744c0624b064fd988`
+- `armeabi-v7a`: `f7cdcae92457e2ea8afada310d88c048`
+
+The `arm64-v8a` packaged core was verified after a clean emulator install on
+June 12, 2026: first launch copied the asset into `cores/` and `md5sum`
+reported `7af19567415593d744c0624b064fd988`.
+
 ## First-Run Asset Extraction
 
 Android config points RetroArch at app-private extracted assets:

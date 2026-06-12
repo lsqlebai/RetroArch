@@ -112,8 +112,6 @@ After copying new artifacts, bump the cache-busting version in:
 - `pkg/emscripten/libretro/libretro.js`: `coreAssetVersion`
 - `pkg/emscripten/libretro/index.html`: query params for `save-sync.js` and `libretro.js`
 
-The current deployed rebuild uses `20260601-215200`.
-
 Important startup compatibility note: `pkg/emscripten/libretro/libretro.js`
 sets the global `Module` to the fresh module object before calling the generated
 Emscripten factory. Newer wrappers can invoke `onRuntimeInitialized` before the
@@ -232,6 +230,45 @@ The sync protocol should stay close to RetroArch's native `task_cloudsync.c` mod
 The local sync gateway stores objects and a `manifest.server` object under `users/<userId>/retroarch/games/<gameId>/`. This shape is intentionally close to the existing `cloud_sync_driver_t` operations (`read`, `update`, `free`) so a native Android driver can later map those operations to the same service.
 
 The local sync gateway writes data under `pkg/emscripten/sync-data` by default when run outside Docker, and `/data` in Docker. This directory is ignored by git.
+
+## Android/Web State Alignment
+
+Current state-format alignment work is based on new states only. Do not add
+large legacy state format adaptation paths in the web player unless explicitly
+requested; a prior forced legacy compatibility attempt could load further but
+made the web player hang.
+
+The active serializer alignment direction is:
+
+- Disable Android dynrec for DOSBox Pure state parity with the web core.
+- Use 64-bit `Bitu`/`Bits` on both Android and Emscripten.
+- Avoid bulk serializing structs that contain native pointers. Replace those
+  `SerializeExcept(...)` call sites with explicit field-level serialization and
+  keep pointer fields represented through pointer indexes or existing
+  pointer-list mappings.
+- Known pointer-sensitive modules handled in the current sweep include Sound
+  Blaster, VGA draw, Disney, Tandy sound, mouse, and VGA Tandy state.
+- Remaining raw struct serialization sites were checked on June 12, 2026:
+  CPU/register state, GUS/MPU401, CMOS, DMA, VGA memory, VGA XGA/Paradise/Tseng,
+  render, PIC, and Voodoo either do not bulk-write native pointers in the active
+  save/load path or already reconstruct pointers through dedicated logic.
+
+Latest validated artifacts from this sweep:
+
+- Web candidate served on `http://127.0.0.1:8090/` from
+  `/private/tmp/retroarch-web-candidate-20260612-serialize-trace`.
+- The normal web target `http://127.0.0.1:8080/` was also updated to use
+  `20260612-serialize-trace` after Chrome cache confusion with an older
+  `20260612-102950` page.
+- Validated web artifact hashes:
+  - JS: `43117f8262195adf96fe25e715232ba394e2b4509eebdf4d7abb71a37d2c3f86`
+  - WASM: `8eeb2dc43ed6793c01d0d007c8e5848f519031bbfdd45664d2cb9a484be9ff61`
+- Android arm64 bundled core md5:
+  `7af19567415593d744c0624b064fd988`.
+- States generated before this sweep, including the old local server state with
+  web failure around `DBPSerialize_VGA_Draw`, are stale for comparison. Generate
+  and upload fresh states with the bundled Android core before validating web
+  load behavior.
 
 The threaded player uses `pkg/emscripten/libretro-thread/libretro.js` and includes `jsdeps/browserfs.min.js`, but this target is currently unstable and should not drive new feature work. For reference only, it mounts game XHR content after the WASM runtime and worker FS are initialized, including:
 
