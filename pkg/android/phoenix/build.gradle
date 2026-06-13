@@ -24,6 +24,11 @@ allprojects {
 
 apply plugin: 'com.android.application'
 
+def cloudGitCommitCount = getGitCommitCount()
+def cloudBuildTime = new Date().format("yyyyMMdd-HHmm")
+def cloudVersionCode = getManifestAttribute("versionCode").toInteger() + cloudGitCommitCount
+def cloudVersionName = "${getManifestAttribute("versionName")}.${cloudGitCommitCount}-${cloudBuildTime}"
+
 android {
   compileSdkVersion 30
   buildToolsVersion "30.0.3"
@@ -39,8 +44,8 @@ android {
       }
     }
     targetSdkVersion 28
-    versionCode System.currentTimeSeconds().toInteger()
-    versionName "${getManifestAttribute("versionName")}_GIT"
+    versionCode cloudVersionCode
+    versionName cloudVersionName
   }
 
   productFlavors {
@@ -158,7 +163,7 @@ android {
   applicationVariants.all { variant ->
     variant.outputs.all { output ->
       def safeVersionName = variant.versionName.replaceAll(/[^A-Za-z0-9._-]/, "_")
-      outputFileName = "RetroArch-${variant.flavorName}-${variant.buildType.name}-${safeVersionName}-${variant.versionCode}.apk"
+      outputFileName = "RetroArch-${variant.flavorName}-${variant.buildType.name}-${safeVersionName}.apk"
     }
   }
 }
@@ -194,6 +199,18 @@ String getManifestAttribute(String attribute) {
   return manifest.attributes().find {
     ((String) it.key).contains(attribute)
   }.value
+}
+
+int getGitCommitCount() {
+  def stdout = new ByteArrayOutputStream()
+  def result = exec {
+    commandLine "git", "rev-list", "--count", "HEAD"
+    standardOutput = stdout
+    ignoreExitValue = true
+  }
+  if (result.exitValue == 0)
+    return stdout.toString().trim().toInteger()
+  return 0
 }
 
 tasks.register("outputVersionCode") {

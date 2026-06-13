@@ -11,6 +11,12 @@ notes here.
 - Debug APK output:
   `pkg/android/phoenix/build/outputs/apk/normal/debug/RetroArch-normal-debug-*.apk`
 
+APK `versionCode` is generated from the manifest base version plus the current
+Git commit count, so it increments by one for each new commit. Normal APK
+filenames include `versionName` shaped as
+`1.22.2-cloud.<commit-count>-<yyyyMMdd-HHmm>`, where the final suffix is the
+local build time.
+
 ## Known-Good Local Build Environment
 
 The current Android project is old enough that the toolchain versions matter.

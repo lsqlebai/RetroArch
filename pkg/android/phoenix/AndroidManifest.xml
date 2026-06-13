@@ -3,7 +3,7 @@
           xmlns:tools="http://schemas.android.com/tools"
     package="com.retroarch"
       android:versionCode="1597175281"
-      android:versionName="1.22.2-cloud-20260603.14"
+      android:versionName="1.22.2-cloud"
     android:installLocation="internalOnly">
     <uses-feature android:glEsVersion="0x00020000" />
     <uses-feature android:name="android.hardware.type.pc" android:required="false"/>
