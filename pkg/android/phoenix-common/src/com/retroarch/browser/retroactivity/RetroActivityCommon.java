@@ -35,6 +35,7 @@ import android.os.Vibrator;
 import android.os.VibrationEffect;
 import android.util.Log;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -296,14 +297,22 @@ public class RetroActivityCommon extends NativeActivity
     }
 
     final String[] labels = new String[games.size()];
+    final String currentGameId = CloudAuthManager.getGameId(this);
+    int checkedItem = -1;
     for (int i = 0; i < games.size(); i++)
-      labels[i] = games.get(i).toString();
+    {
+      CloudGameManager.CloudGame game = games.get(i);
+      labels[i] = game.toString();
+      if (TextUtils.equals(currentGameId, game.gameId))
+        checkedItem = i;
+    }
 
     new AlertDialog.Builder(this)
           .setTitle("Cloud Games")
-          .setItems(labels, new DialogInterface.OnClickListener() {
+          .setSingleChoiceItems(labels, checkedItem, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
+              dialog.dismiss();
               downloadCloudGame(games.get(which));
             }
           })
@@ -313,18 +322,28 @@ public class RetroActivityCommon extends NativeActivity
 
   private void downloadCloudGame(final CloudGameManager.CloudGame game)
   {
-    Toast.makeText(this, "Downloading " + game + "...", Toast.LENGTH_SHORT).show();
+    boolean hasLocalGame = false;
+    try {
+      hasLocalGame = CloudGameManager.getLocalGameFile(this, game).isFile();
+    } catch (Exception ignored) {
+    }
+    Toast.makeText(this,
+          (hasLocalGame ? "Selecting " : "Preparing ") + game + "...",
+          Toast.LENGTH_SHORT).show();
 
     new Thread(new Runnable() {
       @Override
       public void run() {
         try {
-          final File file = CloudGameManager.downloadGame(RetroActivityCommon.this, game);
+          final CloudGameManager.PreparedGame prepared =
+                CloudGameManager.prepareGame(RetroActivityCommon.this, game);
+          final File file = prepared.file;
           runOnUiThread(new Runnable() {
             @Override
             public void run() {
+              String action = prepared.downloaded ? "Downloaded to " : "Selected existing ";
               Toast.makeText(RetroActivityCommon.this,
-                    "Downloaded to " + file.getAbsolutePath()
+                    action + file.getAbsolutePath()
                     + ". Open it from Load Content.", Toast.LENGTH_LONG).show();
             }
           });

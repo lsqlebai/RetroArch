@@ -60,23 +60,27 @@ public final class CloudGameManager
 
 	public static File downloadGame(Context ctx, CloudGame game) throws Exception
 	{
+		return prepareGame(ctx, game).file;
+	}
+
+	public static PreparedGame prepareGame(Context ctx, CloudGame game) throws Exception
+	{
+		File output = getLocalGameFile(ctx, game);
+		if (output.isFile())
+		{
+			CloudAuthManager.mapGamePath(ctx, output.getAbsolutePath(), game.gameId);
+			return new PreparedGame(output, false);
+		}
+
 		if (TextUtils.isEmpty(game.contentUrl))
 			throw new IOException("missing contentUrl");
 
-		File baseDir = ctx.getExternalFilesDir(null);
-		if (baseDir == null)
-			baseDir = ctx.getFilesDir();
-
-		File dir = new File(baseDir, "cloud-games");
-		if (!dir.mkdirs() && !dir.isDirectory())
-			throw new IOException("failed to create " + dir);
-
-		File output = new File(dir, safeFileName(game.fileName));
 		URL url = new URL(resolveContentUrl(CloudAuthManager.getServerUrl(ctx), game.contentUrl));
 		HttpURLConnection conn = (HttpURLConnection)url.openConnection();
 		conn.setRequestMethod("GET");
 		conn.setConnectTimeout(10000);
 		conn.setReadTimeout(60000);
+		File tempOutput = new File(output.getAbsolutePath() + ".download");
 
 		try
 		{
@@ -84,7 +88,7 @@ public final class CloudGameManager
 				throw new IOException("HTTP " + conn.getResponseCode());
 
 			InputStream in = conn.getInputStream();
-			FileOutputStream out = new FileOutputStream(output);
+			FileOutputStream out = new FileOutputStream(tempOutput);
 			byte[] buffer = new byte[64 * 1024];
 			try
 			{
@@ -98,13 +102,33 @@ public final class CloudGameManager
 				out.close();
 			}
 
+			if (output.exists() && !output.delete())
+				throw new IOException("failed to replace " + output);
+			if (!tempOutput.renameTo(output))
+				throw new IOException("failed to save " + output);
+
 			CloudAuthManager.mapGamePath(ctx, output.getAbsolutePath(), game.gameId);
-			return output;
+			return new PreparedGame(output, true);
 		}
 		finally
 		{
 			conn.disconnect();
+			if (tempOutput.exists() && !output.exists())
+				tempOutput.delete();
 		}
+	}
+
+	public static File getLocalGameFile(Context ctx, CloudGame game) throws IOException
+	{
+		File baseDir = ctx.getExternalFilesDir(null);
+		if (baseDir == null)
+			baseDir = ctx.getFilesDir();
+
+		File dir = new File(baseDir, "cloud-games");
+		if (!dir.mkdirs() && !dir.isDirectory())
+			throw new IOException("failed to create " + dir);
+
+		return new File(dir, safeFileName(game.fileName));
 	}
 
 	private static String resolveContentUrl(String serverUrl, String contentUrl) throws Exception
@@ -184,6 +208,18 @@ public final class CloudGameManager
 			else if (hash.length() > 19)
 				hash = hash.substring(0, 19);
 			return name + "-" + hash;
+		}
+	}
+
+	public static final class PreparedGame
+	{
+		public final File file;
+		public final boolean downloaded;
+
+		public PreparedGame(File file, boolean downloaded)
+		{
+			this.file = file;
+			this.downloaded = downloaded;
 		}
 	}
 }
